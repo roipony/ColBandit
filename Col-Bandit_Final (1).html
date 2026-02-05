@@ -1,0 +1,2146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Col-Bandit: Adaptive Pruning for Late-Interaction Retrieval</title>
+    <meta name="description" content="Col-Bandit uses multi-armed bandits to prune ColBERT scoring, achieving up to 6x speedup with provable guarantees and zero training.">
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=DM+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --bg-deep: #05070e;
+            --bg-card: rgba(255,255,255,0.025);
+            --border: rgba(255,255,255,0.06);
+            --green: #34d399;
+            --red: #f87171;
+            --blue: #60a5fa;
+            --purple: #a78bfa;
+            --yellow: #fbbf24;
+            --text-1: #e2e8f0;
+            --text-2: #94a3b8;
+            --text-3: #475569;
+        }
+        * { margin:0; padding:0; box-sizing:border-box; }
+        html { scroll-behavior: smooth; }
+        body {
+            font-family: 'DM Sans', sans-serif;
+            background: var(--bg-deep);
+            color: var(--text-1);
+            overflow-x: hidden;
+        }
+        .font-serif { font-family: 'Instrument Serif', serif; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+
+        /* Grain */
+        body::after {
+            content: '';
+            position: fixed; inset: 0;
+            background: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.025'/%3E%3C/svg%3E");
+            pointer-events: none; z-index: 9999;
+        }
+
+        .glass { background: var(--bg-card); backdrop-filter: blur(12px); border: 1px solid var(--border); }
+        .gradient-text { background: linear-gradient(135deg, var(--green), var(--blue)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .section-line { height: 1px; background: linear-gradient(90deg, transparent 5%, var(--border) 50%, transparent 95%); }
+
+        .hero-bg {
+            background:
+                radial-gradient(ellipse 80% 50% at 50% -10%, rgba(52,211,153,0.07) 0%, transparent 60%),
+                radial-gradient(ellipse 50% 40% at 85% 50%, rgba(96,165,250,0.04) 0%, transparent 50%);
+        }
+
+        /* Scroll reveal */
+        .reveal { opacity:0; transform:translateY(30px); transition: opacity 0.7s ease, transform 0.7s ease; }
+        .reveal.vis { opacity:1; transform:translateY(0); }
+        .fade-up { opacity:0; transform:translateY(24px); animation: fadeUp 0.7s ease forwards; }
+        @keyframes fadeUp { to { opacity:1; transform:translateY(0); } }
+        .d1{animation-delay:.1s} .d2{animation-delay:.2s} .d3{animation-delay:.3s} .d4{animation-delay:.4s} .d5{animation-delay:.5s}
+
+        /* Table */
+        .rtable th { font-family:'JetBrains Mono',monospace; font-size:0.65rem; letter-spacing:0.1em; text-transform:uppercase; color:var(--text-3); padding:0.75rem 1rem; text-align:left; border-bottom:1px solid var(--border); }
+        .rtable td { padding:0.6rem 1rem; border-bottom:1px solid rgba(255,255,255,0.025); font-size:0.88rem; color:var(--text-2); }
+        .rtable tr:hover td { background:rgba(255,255,255,0.015); }
+
+        /* Bar animation */
+        .bar-grow { transition: width 1.4s cubic-bezier(0.16,1,0.3,1); }
+
+        /* Simulation styles */
+        .sim-container .glass { background: rgba(255,255,255,0.05); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); }
+        .cell-pop { animation: cellPop 0.2s ease-out; }
+        @keyframes cellPop { 0%{transform:scale(0.5)} 70%{transform:scale(1.2)} 100%{transform:scale(1)} }
+        .winner-glow { box-shadow: 0 0 20px rgba(34,197,94,0.5); }
+
+        nav a { transition: color 0.2s; }
+        nav a:hover { color: var(--green); }
+
+        .stat-hover { transition: transform 0.3s, box-shadow 0.3s; }
+        .stat-hover:hover { transform: translateY(-3px); box-shadow: 0 8px 40px -8px rgba(52,211,153,0.12); }
+    </style>
+</head>
+<body>
+
+<!-- Nav -->
+<nav class="fixed top-0 left-0 right-0 z-50 backdrop-blur-md border-b border-white/5" style="background:rgba(5,7,14,0.85)">
+    <div class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+        <a href="#" class="font-serif text-xl"><span class="gradient-text">Col-Bandit</span></a>
+        <div class="flex gap-8 text-sm text-[var(--text-2)]">
+            <a href="#colbert-101">ColBERT 101</a>
+            <a href="#method">Method</a>
+            <a href="#results">Results</a>
+            <a href="#demo">Demo</a>
+            <a href="#cite">Cite</a>
+        </div>
+    </div>
+</nav>
+
+<!-- ═══════════════════════════ HERO ═══════════════════════════ -->
+<section class="hero-bg min-h-screen flex items-center justify-center pt-20 pb-28 px-6">
+    <div class="max-w-4xl mx-auto text-center">
+        <div class="fade-up">
+            <span class="inline-block mb-5 px-4 py-1.5 rounded-full border border-white/10 text-[0.65rem] tracking-[0.2em] uppercase text-[var(--text-3)]">Research Paper · 2025</span>
+        </div>
+        <h1 class="font-serif text-5xl md:text-7xl leading-[1.05] mb-5 fade-up d1">
+            <span class="gradient-text">Col-Bandit</span>
+        </h1>
+        <p class="font-serif text-2xl md:text-3xl text-[var(--text-2)] mb-8 fade-up d2" style="font-style:italic;">
+            Adaptive Query-Time Pruning<br>for Late-Interaction Retrieval
+        </p>
+        <p class="text-base md:text-lg text-[var(--text-2)] max-w-2xl mx-auto mb-12 leading-relaxed fade-up d3">
+            ColBERT scores <span class="text-[var(--red)] font-semibold">every</span> document–token pair.
+            Most of that work is wasted.
+            Col-Bandit uses multi-armed bandits to identify the
+            <span class="text-[var(--green)] font-semibold">top-K</span> documents
+            while revealing only a fraction of the score matrix — with <em>provable guarantees</em> and <em>zero training</em>.
+        </p>
+
+        <!-- Big stats -->
+        <div class="flex flex-wrap justify-center gap-5 mb-14 fade-up d4">
+            <div class="stat-hover glass rounded-2xl px-9 py-6" style="box-shadow:0 0 50px -10px rgba(52,211,153,0.1)">
+                <div class="text-5xl font-bold gradient-text mono">5×</div>
+                <div class="text-[0.65rem] text-[var(--text-3)] mt-2 tracking-[0.15em] uppercase">MaxSim FLOP Reduction</div>
+            </div>
+            <div class="stat-hover glass rounded-2xl px-9 py-6">
+                <div class="text-5xl font-bold text-[var(--blue)] mono">9</div>
+                <div class="text-[0.65rem] text-[var(--text-3)] mt-2 tracking-[0.15em] uppercase">Benchmarks (Text + MM)</div>
+            </div>
+            <div class="stat-hover glass rounded-2xl px-9 py-6">
+                <div class="text-5xl font-bold text-[var(--purple)] mono">0</div>
+                <div class="text-[0.65rem] text-[var(--text-3)] mt-2 tracking-[0.15em] uppercase">Training Required</div>
+            </div>
+        </div>
+
+        <div class="flex justify-center gap-4 fade-up d5">
+            <a href="#demo" class="px-7 py-3 rounded-xl font-medium text-sm bg-[var(--green)]/10 border border-[var(--green)]/30 text-[var(--green)] hover:bg-[var(--green)]/20 transition-all">▶ Interactive Demo</a>
+            <a href="#results" class="px-7 py-3 rounded-xl font-medium text-sm glass text-[var(--text-2)] hover:text-white transition-all">View Results →</a>
+        </div>
+    </div>
+</section>
+
+<div class="section-line"></div>
+
+<!-- ═══════════════════════════ COLBERT ILLUSTRATED ═══════════════════════════ -->
+<section id="colbert-101" class="py-28 px-6">
+    <div class="max-w-5xl mx-auto">
+        <div class="text-center mb-16 reveal">
+            <span class="mono text-[0.65rem] tracking-[0.2em] uppercase text-[var(--yellow)]">Background</span>
+            <h2 class="font-serif text-4xl md:text-5xl mt-3">How ColBERT Scores Documents</h2>
+            <p class="text-[var(--text-2)] mt-5 max-w-xl mx-auto leading-relaxed">
+                Walk through the late-interaction scoring step by step.
+                Each cell in the score matrix is one MaxSim operation — and Col-Bandit's target for pruning.
+            </p>
+        </div>
+        <div id="colbert-illustrated-root" class="reveal"></div>
+    </div>
+</section>
+
+<div class="section-line"></div>
+
+<!-- ═══════════════════════════ METHOD ═══════════════════════════ -->
+<section id="method" class="py-28 px-6">
+    <div class="max-w-5xl mx-auto">
+        <div class="text-center mb-20 reveal">
+            <span class="mono text-[0.65rem] tracking-[0.2em] uppercase text-[var(--green)]">How It Works</span>
+            <h2 class="font-serif text-4xl md:text-5xl mt-3">Col-Bandit Algorithm</h2>
+            <p class="text-[var(--text-2)] mt-5 max-w-xl mx-auto leading-relaxed">
+                Col-Bandit reframes late-interaction reranking as a top-K identification problem,
+                using confidence bounds to adaptively prune the score matrix at query time.
+            </p>
+        </div>
+
+        <!-- ColBERT vs Col-Bandit -->
+        <div class="grid md:grid-cols-2 gap-8 mb-24">
+            <div class="glass rounded-2xl p-8 reveal" style="box-shadow:0 0 50px -12px rgba(248,113,113,0.08)">
+                <div class="flex items-center gap-3 mb-5">
+                    <div class="w-2.5 h-2.5 rounded-full bg-[var(--red)]"></div>
+                    <h3 class="text-lg font-semibold">Standard ColBERT</h3>
+                </div>
+                <p class="text-sm text-[var(--text-2)] leading-relaxed mb-6">
+                    Computes <strong class="text-white">all N × T</strong> MaxSim values.
+                    For 1000 documents and 32 query tokens, that's 32,000 lookups — even for documents clearly not in the top-K.
+                </p>
+                <div class="bg-black/30 rounded-xl p-5 text-center">
+                    <div class="mono text-[0.6rem] text-[var(--text-3)] mb-3 tracking-wider">SCORE MATRIX H [N×T]</div>
+                    <div class="inline-grid gap-px" style="grid-template-columns:repeat(10,1fr)">
+                        <div class="w-3.5 h-2.5 rounded-sm bg-red-500/80"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/90"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/70"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/50"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/85"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/75"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/65"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/55"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/70"></div>
+                        <div class="w-3.5 h-2.5 rounded-sm bg-red-500/70"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/80"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/50"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/90"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/75"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/85"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/55"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/65"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/80"></div>
+                        <div class="w-3.5 h-2.5 rounded-sm bg-red-500/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/50"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/70"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/80"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/90"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/55"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/65"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/75"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/45"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/60"></div>
+                        <div class="w-3.5 h-2.5 rounded-sm bg-red-500/50"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/40"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/55"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/45"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/35"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/40"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/50"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/35"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/45"></div>
+                        <div class="w-3.5 h-2.5 rounded-sm bg-red-500/30"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/35"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/25"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/40"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/30"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/35"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/25"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/30"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/20"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/35"></div>
+                    </div>
+                    <div class="mono text-[0.6rem] text-[var(--red)] mt-3 tracking-wider">100% of cells computed</div>
+                </div>
+            </div>
+
+            <div class="glass rounded-2xl p-8 reveal d1" style="box-shadow:0 0 50px -12px rgba(52,211,153,0.08)">
+                <div class="flex items-center gap-3 mb-5">
+                    <div class="w-2.5 h-2.5 rounded-full bg-[var(--green)]"></div>
+                    <h3 class="text-lg font-semibold">Col-Bandit</h3>
+                </div>
+                <p class="text-sm text-[var(--text-2)] leading-relaxed mb-6">
+                    Treats each document as a <strong class="text-white">bandit arm</strong>.
+                    Samples tokens adaptively via LUCB — focusing on competitive candidates and
+                    ignoring obvious losers. Stops when top-K is <strong class="text-[var(--green)]">provably separated</strong>.
+                </p>
+                <div class="bg-black/30 rounded-xl p-5 text-center">
+                    <div class="mono text-[0.6rem] text-[var(--text-3)] mb-3 tracking-wider">SCORE MATRIX H [N×T]</div>
+                    <div class="inline-grid gap-px" style="grid-template-columns:repeat(10,1fr)">
+                        <div class="w-3.5 h-2.5 rounded-sm bg-green-500/80"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/90"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/70"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/50"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/85"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/75"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/65"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/70"></div>
+                        <div class="w-3.5 h-2.5 rounded-sm bg-green-500/70"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/80"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/90"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/85"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/55"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/75"></div>
+                        <div class="w-3.5 h-2.5 rounded-sm bg-green-500/50"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/70"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/55"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div>
+                        <div class="w-3.5 h-2.5 rounded-sm bg-green-500/30"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div>
+                        <div class="w-3.5 h-2.5 rounded-sm bg-green-500/20"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div>
+                    </div>
+                    <div class="mono text-[0.6rem] text-[var(--green)] mt-3 tracking-wider">~16% of cells → same top-K</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<div class="section-line"></div>
+
+<!-- ═══════════════════════════ RESULTS ═══════════════════════════ -->
+<section id="results" class="py-28 px-6">
+    <div class="max-w-5xl mx-auto">
+        <div class="text-center mb-16 reveal">
+            <span class="mono text-[0.65rem] tracking-[0.2em] uppercase text-[var(--blue)]">Experiments</span>
+            <h2 class="font-serif text-4xl md:text-5xl mt-3">Results</h2>
+            <p class="text-[var(--text-2)] mt-5 max-w-2xl mx-auto leading-relaxed">
+                Evaluated on 5 BEIR text datasets (ColBERTv2, Jina-ColBERT-v2) and 4 REAL-MM-RAG multimodal datasets (Granite Vision Embedding 3.2).
+                <br/><br/>
+                <strong className="text-white">Overlap@K</strong> measures ranking fidelity: the fraction of documents in Col-Bandit's top-K that match full ColBERT's top-K. 
+                An Overlap@5 of 90% means 4.5 out of 5 documents are correctly identified.
+            </p>
+        </div>
+
+        <!-- Table -->
+        <div class="glass rounded-2xl overflow-hidden mb-6 reveal">
+            <div class="px-6 pt-5 pb-3">
+                <h4 class="text-sm font-semibold mb-1">Table 1: Col-Bandit Efficiency Across Models</h4>
+                <p class="text-xs text-[var(--text-2)]">Compute shows the percentage of score matrix cells that Col-Bandit must compute to achieve 90% and 95% Overlap@K. Savings shows the compute reduction vs. full ColBERT (100% compute).</p>
+            </div>
+            <table class="rtable w-full">
+                <thead>
+                    <tr class="bg-white/[0.015]">
+                        <th rowspan="2" style="vertical-align:bottom">Model</th>
+                        <th colspan="4" style="border-right:1px solid rgba(255,255,255,0.06)">Overlap@1</th>
+                        <th colspan="4">Overlap@5</th>
+                    </tr>
+                    <tr class="bg-white/[0.015]">
+                        <th style="background:rgba(255,255,255,0.02)">90%</th>
+                        <th style="background:rgba(255,255,255,0.04)">95%</th>
+                        <th style="background:rgba(255,255,255,0.02)">90%</th>
+                        <th style="background:rgba(255,255,255,0.04); border-right:1px solid rgba(255,255,255,0.06)">95%</th>
+                        <th style="background:rgba(255,255,255,0.02)">90%</th>
+                        <th style="background:rgba(255,255,255,0.04)">95%</th>
+                        <th style="background:rgba(255,255,255,0.02)">90%</th>
+                        <th style="background:rgba(255,255,255,0.04)">95%</th>
+                    </tr>
+                    <tr class="text-[0.6rem] text-[var(--text-3)]">
+                        <th></th>
+                        <th colspan="2" style="border-right:1px solid rgba(255,255,255,0.03)">Compute</th>
+                        <th colspan="2" style="border-right:1px solid rgba(255,255,255,0.06)">Savings</th>
+                        <th colspan="2" style="border-right:1px solid rgba(255,255,255,0.03)">Compute</th>
+                        <th colspan="2">Savings</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td class="font-medium">ColBERTv2<br/><span class="text-[0.6rem] text-[var(--text-3)]">(BEIR)</span></td>
+                        <td class="mono text-sm">13%</td>
+                        <td class="mono text-sm" style="background:rgba(255,255,255,0.02)">14%</td>
+                        <td class="mono text-sm">7.7×</td>
+                        <td class="mono text-sm" style="background:rgba(255,255,255,0.02); border-right:1px solid rgba(255,255,255,0.06)">7.1×</td>
+                        <td class="mono text-sm">28%</td>
+                        <td class="mono text-sm" style="background:rgba(255,255,255,0.02)">33%</td>
+                        <td class="mono text-sm">3.6×</td>
+                        <td class="mono text-sm" style="background:rgba(255,255,255,0.02)">3.1×</td>
+                    </tr>
+                    <tr>
+                        <td class="font-medium">Jina-ColBERT-v2<br/><span class="text-[0.6rem] text-[var(--text-3)]">(BEIR)</span></td>
+                        <td class="mono text-sm">11%</td>
+                        <td class="mono text-sm" style="background:rgba(255,255,255,0.02)">14%</td>
+                        <td class="mono text-sm">9.1×</td>
+                        <td class="mono text-sm" style="background:rgba(255,255,255,0.02); border-right:1px solid rgba(255,255,255,0.06)">7.1×</td>
+                        <td class="mono text-sm">26%</td>
+                        <td class="mono text-sm" style="background:rgba(255,255,255,0.02)">34%</td>
+                        <td class="mono text-sm">3.8×</td>
+                        <td class="mono text-sm" style="background:rgba(255,255,255,0.02)">3.0×</td>
+                    </tr>
+                    <tr>
+                        <td class="font-medium">Granite Vision<br/><span class="text-[0.6rem] text-[var(--text-3)]">(REAL-MM-RAG)</span></td>
+                        <td class="mono text-sm">16%</td>
+                        <td class="mono text-sm" style="background:rgba(255,255,255,0.02)">18%</td>
+                        <td class="mono text-sm">6.3×</td>
+                        <td class="mono text-sm" style="background:rgba(255,255,255,0.02); border-right:1px solid rgba(255,255,255,0.06)">5.9×</td>
+                        <td class="mono text-sm">31%</td>
+                        <td class="mono text-sm" style="background:rgba(255,255,255,0.02)">41%</td>
+                        <td class="mono text-sm">3.2×</td>
+                        <td class="mono text-sm" style="background:rgba(255,255,255,0.02)">2.5×</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Key takeaways -->
+        <div class="grid md:grid-cols-2 gap-4 mb-14 reveal">
+            <div class="glass rounded-xl p-5 text-center">
+                <div class="mono text-3xl font-bold text-[var(--green)] mb-2">11-18%</div>
+                <div class="text-xs text-[var(--text-2)]">Compute for Overlap@1</div>
+                <div class="text-[0.65rem] text-[var(--text-2)] mt-2">Range across models: 11-16% (90%), 14-18% (95%)</div>
+            </div>
+            <div class="glass rounded-xl p-5 text-center">
+                <div class="mono text-3xl font-bold text-[var(--blue)] mb-2">26-41%</div>
+                <div class="text-xs text-[var(--text-2)]">Compute for Overlap@5</div>
+                <div class="text-[0.65rem] text-[var(--text-2)] mt-2">Range across models: 26-31% (90%), 33-41% (95%)</div>
+            </div>
+            <div class="glass rounded-xl p-5 text-center">
+                <div class="mono text-3xl font-bold text-[var(--green)] mb-2">5.9×-9.1×</div>
+                <div class="text-xs text-[var(--text-2)]">Savings for Overlap@1</div>
+                <div class="text-[0.65rem] text-[var(--text-2)] mt-2">Range across models: 7.1×-9.1× (90%), 5.9×-7.1× (95%)</div>
+            </div>
+            <div class="glass rounded-xl p-5 text-center">
+                <div class="mono text-3xl font-bold text-[var(--blue)] mb-2">2.5×-3.8×</div>
+                <div class="text-xs text-[var(--text-2)]">Savings for Overlap@5</div>
+                <div class="text-[0.65rem] text-[var(--text-2)] mt-2">Range across models: 3.6×-3.8× (90%), 2.5×-3.1× (95%)</div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<div class="section-line"></div>
+
+<!-- ═══════════════════════════ DEMO ═══════════════════════════ -->
+<section id="demo" class="py-28 px-6">
+    <div class="max-w-6xl mx-auto">
+        <div class="text-center mb-14 reveal">
+            <span class="mono text-[0.65rem] tracking-[0.2em] uppercase text-[var(--purple)]">Interactive</span>
+            <h2 class="font-serif text-4xl md:text-5xl mt-3">Watch It Run</h2>
+            <p class="text-[var(--text-2)] mt-5 max-w-xl mx-auto">
+                Replay an actual Col-Bandit execution step by step.
+                The left shows ColBERT's full scoring; the right shows Col-Bandit's adaptive approach.
+            </p>
+        </div>
+        <div class="sim-container reveal d1">
+            <div id="simulation-root"></div>
+        </div>
+    </div>
+</section>
+
+<div class="section-line"></div>
+
+<!-- ═══════════════════════════ CITE ═══════════════════════════ -->
+<section id="cite" class="py-28 px-6">
+    <div class="max-w-3xl mx-auto text-center reveal">
+        <span class="mono text-[0.65rem] tracking-[0.2em] uppercase text-[var(--text-3)]">Reference</span>
+        <h2 class="font-serif text-4xl mt-3 mb-10">Citation</h2>
+        <div class="glass rounded-2xl p-7 text-left">
+            <pre class="mono text-xs text-[var(--text-2)] leading-relaxed overflow-x-auto"><code>@article{colbandit2025,
+  title   = {Col-Bandit: Adaptive Query-Time Pruning
+             for Late-Interaction Retrieval},
+  author  = {Authors},
+  journal = {arXiv preprint arXiv:XXXX.XXXXX},
+  year    = {2025}
+}</code></pre>
+        </div>
+        <div class="flex justify-center gap-4 mt-10">
+            <a href="#" class="px-6 py-2.5 glass rounded-xl text-sm text-[var(--text-2)] hover:text-white transition-all flex items-center gap-2">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                Paper
+            </a>
+            <a href="#" class="px-6 py-2.5 glass rounded-xl text-sm text-[var(--text-2)] hover:text-white transition-all flex items-center gap-2">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.44 9.8 8.2 11.39.6.11.82-.26.82-.58v-2.03c-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.09-.75.08-.73.08-.73 1.21.08 1.85 1.24 1.85 1.24 1.07 1.84 2.81 1.31 3.5 1 .11-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.12-.3-.54-1.52.12-3.18 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 6.02 0c2.28-1.55 3.29-1.23 3.29-1.23.66 1.66.24 2.88.12 3.18.77.84 1.24 1.91 1.24 3.22 0 4.61-2.81 5.63-5.48 5.92.43.37.81 1.1.81 2.22v3.29c0 .32.22.7.82.58C20.57 21.8 24 17.3 24 12c0-6.63-5.37-12-12-12z"/></svg>
+                Code
+            </a>
+        </div>
+    </div>
+</section>
+
+<!-- Footer -->
+<footer class="py-10 px-6 border-t border-white/5">
+    <div class="max-w-5xl mx-auto text-center text-xs text-[var(--text-3)]">
+        Col-Bandit · Adaptive Query-Time Pruning for Late-Interaction Retrieval · 2025
+    </div>
+</footer>
+
+<!-- Scroll reveal -->
+<script>
+    const obs = new IntersectionObserver(es => es.forEach(e => { if(e.isIntersecting) e.target.classList.add('vis'); }), {threshold:0.08});
+    document.querySelectorAll('.reveal').forEach(el => obs.observe(el));
+    // Bars
+    const bobs = new IntersectionObserver(es => es.forEach(e => { if(e.isIntersecting) e.target.querySelectorAll('.bar-grow').forEach(b => setTimeout(()=>b.style.width=b.dataset.w+'%',200)); }), {threshold:0.3});
+    const bc = document.getElementById('bar-chart'); if(bc) bobs.observe(bc);
+</script>
+
+<!-- ═══════════════════════════ COLBERT 101 INTERACTIVE ═══════════════════════════ -->
+<script type="text/babel">
+    (() => {
+        const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+        // ── Data ──────────────────────────────────────────
+        const QUERY = "What are the latest advances in AI?";
+        const QT = ["what","are","the","latest","advances","in","AI"];
+        const DOCS = [
+            { short:"Doc A", name:"Nature AI", tokens:["neural","network","research","advances","deep","learning"], color:"#60a5fa" },
+            { short:"Doc B", name:"Auto Mag", tokens:["vehicle","engine","hybrid","electric","motor","tesla"], color:"#a78bfa" },
+            { short:"Doc C", name:"AI Review", tokens:["artificial","intelligence","learning","neural","algorithms","deep"], color:"#f472b6" },
+            { short:"Doc D", name:"Physics", tokens:["quantum","particle","photon","wave","energy","mass"], color:"#fb923c" },
+        ];
+        const N = DOCS.length, T = QT.length;
+
+        // Pre-computed MaxSim scores [doc][queryToken] - Correct pruning example
+        // Doc A (winner #2): sum = 6.10. Reveal 6/7 cells (86%) → lower bound = 5.77
+        // Doc C (winner #1): sum = 6.50. Reveal 6/7 cells (86%) → lower bound = 5.85
+        // Doc B & D: Reveal 2/7 cells (29%). Upper bound with max(1.0) for rest < A's lower bound
+        const MAXSIM = [
+            [.99,.98,.97,.96,.94,.93,.33],  // Doc A: 6.10 total. First 6 = 5.77 (lower bound)
+            [.40,.35,.35,.35,.35,.35,.35],   // Doc B: 2.50 total. First 2 = 0.75. Upper bound = 0.75 + 5×1.0 = 5.75 < 5.77 ✓
+            [1.0,.99,.98,.97,.96,.95,.65],   // Doc C: 6.50 total. First 6 = 5.85 (lower bound)
+            [.35,.30,.30,.30,.30,.30,.25],   // Doc D: 2.10 total. First 2 = 0.65. Upper bound = 0.65 + 5×1.0 = 5.65 < 5.77 ✓
+        ];
+
+        const docTotals = DOCS.map((_,di) => MAXSIM[di].reduce((a,b)=>a+b,0));
+        const ranked = docTotals.map((s,i)=>({i,s})).sort((a,b)=>b.s-a.s);
+        const topK = 2; // Looking for top 2
+        const topIndices = ranked.slice(0, topK).map(r => r.i);
+
+        // ── Steps ─────────────────────────────────────────
+        const STEPS = [
+            { id:"query",  title:"① Tokenize the Query",  sub:"The query is split into T = "+T+" tokens. Each token is encoded into a "+128+"-dimensional embedding vector." },
+            { id:"docs",   title:"② Candidate Documents",  sub:"We have N = "+N+" candidate documents from the retrieval stage. Each document's tokens are pre-encoded into "+128+"-dimensional embeddings." },
+            { id:"grid",   title:"③ The Score Matrix (H)",      sub:"The N×T matrix H stores MaxSim values. Each cell H[d,q] will hold the highest similarity between query token q and any token in document d." },
+            { id:"arrows", title:"④ Computing MaxSim Values", sub:"For each cell, we compute the maximum cosine similarity. Example: query token 'AI' finds its best match among Doc A's tokens ('neural', 'deep', etc.)." },
+            { id:"sums",   title:"⑤ Row Sums → Document Scores", sub:"Each document's relevance score is the sum of its row. We want the top-"+topK+" documents with highest sums." },
+            { id:"cost",   title:"⑥ Col-Bandit's Insight: Adaptive Pruning", sub:"Full ColBERT computes all cells. Col-Bandit adaptively reveals only what's needed to certify the top-K with provable guarantees." },
+        ];
+
+        // ── Colors ────────────────────────────────────────
+        const green = '#34d399', red = '#f87171', blue = '#60a5fa';
+        const cellBg = (v) => `rgba(52,211,153,${Math.min(1,v)*0.55})`;
+        const cellTx = (v) => v > 0.5 ? '#34d399' : '#6b7280';
+        const prunedCell = 'rgba(120,120,120,0.25)'; // Brighter gray for visibility
+
+        // ── Component ─────────────────────────────────────
+        const ColBERTIllustrated = () => {
+            const [step, setStep] = useState(0);
+            const [hoverCell, setHoverCell] = useState(null); // {d,q}
+            const [revealedCols, setRevealedCols] = useState(0);
+            const [showSums, setShowSums] = useState(false);
+            const [pruned, setPruned] = useState(new Set());
+
+            const s = STEPS[step];
+            const showMatrix = step >= 2;
+
+            // Animations per step
+            useEffect(() => {
+                setHoverCell(null);
+                setRevealedCols(0);
+                setShowSums(false);
+                setPruned(new Set());
+
+                if (s.id === 'arrows') {
+                    let col = 0;
+                    const iv = setInterval(() => {
+                        col++;
+                        if (col <= T) setRevealedCols(col);
+                        else clearInterval(iv);
+                    }, 250);
+                    return () => clearInterval(iv);
+                }
+                if (s.id === 'sums') {
+                    setRevealedCols(T);
+                    setTimeout(() => setShowSums(true), 400);
+                }
+                if (s.id === 'cost') {
+                    setRevealedCols(T);
+                    setShowSums(true);
+                    // Prune cells that Col-Bandit would skip
+                    setTimeout(() => {
+                        const skip = new Set();
+                        // Doc A (index 0): reveal first 6 (86%), prune last 1
+                        for (let qi = 6; qi < T; qi++) skip.add(`0-${qi}`);
+                        // Doc B (index 1): reveal first 2 (29%), prune rest
+                        for (let qi = 2; qi < T; qi++) skip.add(`1-${qi}`);
+                        // Doc C (index 2): reveal first 6 (86%), prune last 1
+                        for (let qi = 6; qi < T; qi++) skip.add(`2-${qi}`);
+                        // Doc D (index 3): reveal first 2 (29%), prune rest
+                        for (let qi = 2; qi < T; qi++) skip.add(`3-${qi}`);
+                        setPruned(skip);
+                    }, 600);
+                }
+            }, [step]);
+
+            // ── Query token bar ───────────────────────────
+            const QueryBar = ({ highlight, arrowTo }) => {
+                const showScores = showSums;
+                return (
+                <div className="flex flex-col items-center gap-3 mb-2">
+                    {step === 0 && (
+                        <div className="glass rounded-xl px-5 py-3 text-center mb-2" style={{maxWidth:520}}>
+                            <span className="text-gray-400 text-xs">User query: </span>
+                            <span className="text-white" style={{fontFamily:'Instrument Serif,serif',fontStyle:'italic',fontSize:'1.1rem'}}>"{QUERY}"</span>
+                        </div>
+                    )}
+                    <div className="flex items-end gap-1.5" style={{paddingLeft: showMatrix ? '90px' : '0', paddingRight: showScores ? '60px' : '0'}}>
+                        {QT.map((tok, qi) => {
+                            const isHighlight = qi < revealedCols;
+                            return (
+                                <div key={qi} className="flex flex-col items-center gap-1" style={{width:46}}>
+                                    <div className={`rounded-lg text-xs font-bold transition-all duration-300 flex items-center justify-center ${
+                                        isHighlight ? 'scale-105' : ''
+                                    }`} style={{
+                                        width: '100%',
+                                        height: 28,
+                                        background: isHighlight ? 'rgba(52,211,153,0.15)' : 'rgba(52,211,153,0.08)',
+                                        border: isHighlight ? '1.5px solid rgba(52,211,153,0.4)' : '1px solid rgba(52,211,153,0.2)',
+                                        color: '#e2e8f0'
+                                    }}>
+                                        {tok}
+                                    </div>
+                                    <div className="text-[0.5rem] text-gray-600 mono">q<sub>{qi}</sub></div>
+                                    {/* show embedding dimension hint on step 0 */}
+                                    {step === 0 && (
+                                        <div className="text-[0.45rem] text-gray-600">
+                                            ℝ<sup>128</sup>
+                                        </div>
+                                    )}
+                                    {/* Arrow down to matrix on arrows step */}
+                                    {s.id === 'arrows' && isHighlight && (
+                                        <svg width="2" height="16" className="cell-pop">
+                                            <line x1="1" y1="0" x2="1" y2="16" stroke={green} strokeWidth="1.5" strokeDasharray="2 2"/>
+                                        </svg>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            )};
+            
+
+            // ── Matrix Grid ───────────────────────────────
+            const Matrix = () => {
+                const showScores = showSums;
+                
+                // Calculate partial sums based on revealed cells
+                const partialSums = DOCS.map((_, di) => {
+                    let sum = 0;
+                    for (let qi = 0; qi < T; qi++) {
+                        if (!pruned.has(`${di}-${qi}`)) {
+                            sum += MAXSIM[di][qi];
+                        }
+                    }
+                    return sum;
+                });
+                
+                return (
+                    <div className="inline-flex gap-2">
+                        <div className="flex flex-col gap-1">
+                            {/* Column labels (query tokens) - minimal for space */}
+                            <div className="flex gap-1.5 mb-0.5" style={{marginLeft:90}}>
+                                {QT.map((t,qi) => (
+                                    <div key={qi} className="text-center text-[0.45rem] text-gray-600 mono" style={{width:46}}>
+                                        q{qi}
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* Rows */}
+                            {DOCS.map((doc, di) => {
+                                const isTopK = topIndices.includes(di);
+                                const rowSum = docTotals[di];
+                                const rank = ranked.findIndex(r => r.i === di) + 1;
+
+                                return (
+                                    <div key={di} className="flex items-center gap-1.5">
+                                        {/* Row label */}
+                                        <div className="flex items-center gap-2 shrink-0" style={{width:90}}>
+                                            <div className="text-[0.5rem] text-gray-600 mono">d{di}</div>
+                                            <div className="text-xs font-semibold truncate" style={{color: doc.color}}>
+                                                {doc.short}
+                                            </div>
+                                        </div>
+
+                                        {/* Cells */}
+                                        {MAXSIM[di].map((val, qi) => {
+                                            const key = `${di}-${qi}`;
+                                            const isPruned = pruned.has(key);
+                                            const isHover = hoverCell?.d === di && hoverCell?.q === qi;
+
+                                            return (
+                                                <div key={qi}
+                                                    className={`relative rounded ${isPruned ? '' : 'cursor-pointer hover:ring-2 hover:ring-green-400'} transition-all`}
+                                                    style={{
+                                                        width: 46,
+                                                        height: 32,
+                                                        background: isPruned ? prunedCell : cellBg(val),
+                                                        border: isPruned ? '1px solid rgba(255,255,255,0.15)' : '1px solid rgba(52,211,153,0.2)'
+                                                    }}
+                                                    onMouseEnter={() => !isPruned && setHoverCell({d:di,q:qi})}
+                                                    onMouseLeave={() => setHoverCell(null)}
+                                                >
+                                                    <div className="absolute inset-0 flex items-center justify-center">
+                                                        {!isPruned && (
+                                                            <span className="mono text-[0.6rem] font-bold" style={{color: cellTx(val)}}>
+                                                                {val.toFixed(2)}
+                                                            </span>
+                                                        )}
+                                                        {isPruned && (
+                                                            <span className="text-[0.5rem] text-gray-600">—</span>
+                                                        )}
+                                                    </div>
+                                                    {/* Arrow from query token on arrows step */}
+                                                    {s.id === 'arrows' && qi < revealedCols && !isPruned && (
+                                                        <div className="absolute -top-[17px] left-1/2 -translate-x-1/2">
+                                                            <svg width="8" height="8" className="cell-pop">
+                                                                <polygon points="4,0 7,6 1,6" fill={green} opacity="0.7"/>
+                                                            </svg>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+
+                                        {/* Sum display */}
+                                        {showScores && (
+                                            <div className="flex items-center gap-2 ml-2">
+                                                {/* Show partial sum in cost step, full sum otherwise */}
+                                                {s.id === 'cost' ? (
+                                                    <div className={`px-2 py-1 rounded text-xs font-bold mono transition-all duration-500 ${
+                                                        isTopK ? 'bg-yellow-500/20 text-yellow-400 ring-1 ring-yellow-400/40' : 'bg-gray-800/50 text-gray-500'
+                                                    }`}>
+                                                        {partialSums[di].toFixed(2)}
+                                                    </div>
+                                                ) : (
+                                                    <div className={`px-2 py-1 rounded text-xs font-bold mono transition-all duration-500 ${
+                                                        isTopK ? 'bg-green-500/20 text-green-400 ring-1 ring-green-400/40' : 'bg-gray-800/50 text-gray-500'
+                                                    }`}>
+                                                        {rowSum.toFixed(2)}
+                                                    </div>
+                                                )}
+                                                {isTopK && (
+                                                    <div className="text-[0.5rem] text-yellow-400 font-bold">
+                                                        #{rank}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+
+                        {/* Score column label */}
+                        {showScores && (
+                            <div className="flex flex-col justify-center ml-1">
+                                <div className="text-[0.5rem] text-yellow-400 tracking-wider uppercase" style={{writingMode:'vertical-lr'}}>
+                                    Σ = Score
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                );
+            };
+
+            // ── Hover tooltip ─────────────────────────────
+            const Tooltip = () => {
+                if (!hoverCell || !showMatrix) return null;
+                const {d,q} = hoverCell;
+                return (
+                    <div className="glass rounded-xl p-4 mt-4 max-w-lg mx-auto text-center transition-all duration-200">
+                        <span className="text-xs text-gray-400">MaxSim( </span>
+                        <span className="text-green-400 font-bold text-sm">"{QT[q]}"</span>
+                        <span className="text-xs text-gray-400"> , </span>
+                        <span className="font-bold text-sm" style={{color:DOCS[d].color}}>{DOCS[d].short}</span>
+                        <span className="text-xs text-gray-400"> ) = max similarity across all doc tokens = </span>
+                        <span className="mono text-green-400 font-bold text-lg">{MAXSIM[d][q].toFixed(2)}</span>
+                    </div>
+                );
+            };
+
+            // ── Bottom stats for cost step ────────────────
+            const CostCallout = () => {
+                const revealedCount = N*T - pruned.size;
+                const coverage = (revealedCount / (N*T) * 100).toFixed(0);
+                
+                // Calculate partial sums based on revealed cells
+                const partialSums = DOCS.map((_, di) => {
+                    let sum = 0;
+                    for (let qi = 0; qi < T; qi++) {
+                        if (!pruned.has(`${di}-${qi}`)) {
+                            sum += MAXSIM[di][qi];
+                        }
+                    }
+                    return sum;
+                });
+                
+                return (
+                    <div className="mt-6 space-y-4">
+                        <div className="glass rounded-xl p-5 max-w-2xl mx-auto" style={{borderLeft:'3px solid var(--green)'}}>
+                            <div className="flex items-start gap-3">
+                                <span className="text-green-400 text-xl">💡</span>
+                                <div className="flex-1">
+                                    <p className="text-sm text-gray-300 leading-relaxed mb-3">
+                                        <strong className="text-green-400">Col-Bandit's adaptive strategy:</strong>
+                                    </p>
+                                    <ul className="text-sm text-gray-300 leading-relaxed space-y-2 ml-4">
+                                        <li>• <strong className="text-blue-400">Top-K candidates (A, C)</strong>: Reveal 6 of 7 cells (86%) → establish strong <strong>lower bounds</strong></li>
+                                        <li>• <strong className="text-gray-400">Clear losers (B, D)</strong>: Reveal only 2 cells (29%) → calculate <strong>upper bounds</strong></li>
+                                        <li>• <strong className="text-yellow-400">Pruning condition</strong>: 
+                                            <div className="ml-4 mt-1 font-mono text-xs">
+                                                Doc B upper bound = 0.75 + (5 × 1.0) = 5.75<br/>
+                                                Doc A lower bound = 5.77<br/>
+                                                5.75 &lt; 5.77 → <span className="text-green-400">Safe to prune!</span>
+                                            </div>
+                                        </li>
+                                        <li>• Even if Doc B's 5 unrevealed cells were all perfect (1.0), it still can't beat Doc A's proven minimum score</li>
+                                    </ul>
+                                    
+                                    {/* Partial scores display */}
+                                    <div className="mt-5 pt-4 border-t border-white/5">
+                                        <div className="text-xs text-gray-400 mb-3 text-center">
+                                            <strong className="text-yellow-400">Key insight:</strong> We only care about <strong>ranking</strong>, not exact scores
+                                        </div>
+                                        <div className="grid grid-cols-4 gap-2 text-center">
+                                            {DOCS.map((doc, di) => {
+                                                const isTopK = topIndices.includes(di);
+                                                const rank = ranked.findIndex(r => r.i === di) + 1;
+                                                return (
+                                                    <div key={di} className="glass rounded-lg p-2">
+                                                        <div className="text-[0.6rem] font-semibold mb-1" style={{color: doc.color}}>
+                                                            {doc.short}
+                                                        </div>
+                                                        <div className={`mono text-xs font-bold ${isTopK ? 'text-yellow-400' : 'text-gray-500'}`}>
+                                                            {partialSums[di].toFixed(2)}
+                                                        </div>
+                                                        {isTopK && (
+                                                            <div className="text-[0.5rem] text-yellow-400 mt-0.5">
+                                                                #{rank}
+                                                            </div>
+                                                        )}
+                                                        {!isTopK && (
+                                                            <div className="text-[0.45rem] text-gray-600 mt-0.5">
+                                                                can't win
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                        <div className="text-[0.6rem] text-gray-500 mt-2 text-center">
+                                            Partial sums after adaptive reveal → Ranking certified ✓
+                                        </div>
+                                    </div>
+                                    
+                                    {/* Stats */}
+                                    <div className="mt-4 pt-4 border-t border-white/5 text-center">
+                                        <div className="inline-flex items-center gap-3">
+                                            <div>
+                                                <span className="mono text-lg font-bold text-green-400">{revealedCount}/{N*T}</span>
+                                                <span className="text-xs text-gray-500 ml-1">cells revealed</span>
+                                            </div>
+                                            <div className="w-px h-6 bg-white/10"></div>
+                                            <div>
+                                                <span className="mono text-lg font-bold text-green-400">{coverage}%</span>
+                                                <span className="text-xs text-gray-500 ml-1">coverage/compute</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="flex items-center justify-center gap-4 mt-4 pt-3 border-t border-white/5">
+                                        <div className="flex items-center gap-1.5">
+                                            <div className="w-5 h-3 rounded" style={{background:'rgba(52,211,153,0.4)'}}></div>
+                                            <span className="text-[0.6rem] text-gray-400">Revealed (computed)</span>
+                                        </div>
+                                        <div className="flex items-center gap-1.5">
+                                            <div className="w-5 h-3 rounded" style={{background: prunedCell, border:'1px solid rgba(255,255,255,0.1)'}}></div>
+                                            <span className="text-[0.6rem] text-gray-400">Pruned (skipped)</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+
+            const SumExplain = () => (
+                <div className="mt-5 glass rounded-xl p-5 max-w-xl mx-auto text-center">
+                    <div className="text-xs text-gray-400 mb-2">Score formula for each document:</div>
+                    <div className="mono text-sm text-gray-300">
+                        Score(d) = <span className="text-green-400">Σ</span><sub className="text-gray-500">q∈Q</sub> MaxSim(q, d) = <span className="text-green-400">sum of all cells in the row</span>
+                    </div>
+                    <div className="mt-3 text-xs text-gray-500">
+                        Top-{topK}: <span style={{color: DOCS[2].color}} className="font-bold">Doc C</span> ({docTotals[2].toFixed(2)}) and <span style={{color: DOCS[0].color}} className="font-bold">Doc A</span> ({docTotals[0].toFixed(2)})
+                    </div>
+                </div>
+            );
+
+            return (
+                <div>
+                    {/* Step dots */}
+                    <div className="flex justify-center gap-1.5 mb-10">
+                        {STEPS.map((st, i) => (
+                            <button key={i} onClick={() => setStep(i)}
+                                className={`rounded-full transition-all duration-300 ${i === step ? 'w-12 h-3 bg-green-400' : 'w-3 h-3 bg-gray-600 hover:bg-gray-500'}`} />
+                        ))}
+                    </div>
+
+                    {/* Step title */}
+                    <div className="text-center mb-10">
+                        <h3 className="font-serif text-3xl mb-3">{s.title}</h3>
+                        <p className="text-base text-gray-400 max-w-2xl mx-auto leading-relaxed">{s.sub}</p>
+                    </div>
+
+                    {/* Content area */}
+                    <div className="min-h-[400px]" key={step}>
+                        <div className="fade-up">
+                            {/* Step 0: query */}
+                            {s.id === 'query' && (
+                                <div className="flex flex-col items-center gap-4">
+                                    <div className="glass rounded-2xl px-8 py-5 text-center" style={{maxWidth:560}}>
+                                        <span className="text-gray-400 text-sm">User query: </span>
+                                        <span className="text-white text-xl" style={{fontFamily:'Instrument Serif,serif',fontStyle:'italic'}}>"{QUERY}"</span>
+                                    </div>
+                                    <svg width="2" height="36"><line x1="1" y1="0" x2="1" y2="36" stroke="#34d399" strokeWidth="1.5" strokeDasharray="4 3"/></svg>
+                                    <div className="text-xs text-green-400 font-semibold tracking-wider uppercase">Tokenize + Encode</div>
+                                    <svg width="2" height="24"><line x1="1" y1="0" x2="1" y2="24" stroke="#34d399" strokeWidth="1.5" strokeDasharray="4 3"/></svg>
+                                    <div className="flex flex-wrap justify-center gap-2">
+                                        {QT.map((t,i) => (
+                                            <div key={i} className="flex flex-col items-center gap-1.5">
+                                                <div className="px-4 py-2.5 rounded-xl text-sm font-bold"
+                                                    style={{background:'rgba(52,211,153,0.1)', border:'1.5px solid rgba(52,211,153,0.25)', color:'#e2e8f0'}}>
+                                                    {t}
+                                                </div>
+                                                <div className="flex items-center gap-1">
+                                                    <div className="text-[0.5rem] text-gray-600 mono">q<sub>{i}</sub></div>
+                                                    <div className="text-[0.5rem] text-gray-600">∈ ℝ<sup>128</sup></div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <div className="mt-4 glass rounded-xl p-4 max-w-md text-center">
+                                        <span className="text-xs text-gray-400">Each token becomes a 128-dimensional embedding vector that captures its semantic meaning</span>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Step 1: docs */}
+                            {s.id === 'docs' && (
+                                <div className="flex flex-col items-center gap-6">
+                                    <div className="grid grid-cols-2 gap-4 max-w-2xl">
+                                        {DOCS.map((doc,i) => (
+                                            <div key={i} className="glass rounded-xl p-5">
+                                                <div className="flex items-center gap-2 mb-3">
+                                                    <div className="w-2 h-2 rounded-full" style={{background:doc.color}}></div>
+                                                    <span className="font-semibold text-sm" style={{color:doc.color}}>{doc.name}</span>
+                                                </div>
+                                                <div className="flex flex-wrap gap-1 mb-3">
+                                                    {doc.tokens.slice(0,4).map((tok,j) => (
+                                                        <span key={j} className="px-2 py-0.5 rounded text-[0.6rem]" style={{background:'rgba(255,255,255,0.05)', color:'#94a3b8'}}>
+                                                            {tok}
+                                                        </span>
+                                                    ))}
+                                                    <span className="text-[0.6rem] text-gray-600">+ {doc.tokens.length - 4} more</span>
+                                                </div>
+                                                <div className="text-[0.55rem] text-gray-600 pt-2 border-t border-white/5">
+                                                    Each token: ℝ<sup>128</sup> embedding
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <div className="glass rounded-xl p-4 max-w-lg text-center">
+                                        <span className="text-xs text-gray-400">
+                                            These {N} candidate documents come from a first-stage retrieval. Now we need to precisely score each one using late interaction.
+                                        </span>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Steps 2-5: matrix view */}
+                            {showMatrix && (
+                                <div className="flex flex-col items-center">
+                                    <QueryBar />
+                                    <Matrix />
+                                    <Tooltip />
+                                    {s.id === 'sums' && showSums && <SumExplain />}
+                                    {s.id === 'cost' && <CostCallout />}
+                                    {s.id === 'grid' && (
+                                        <div className="mt-5 text-center text-sm text-gray-500">
+                                            Click any cell to see its MaxSim computation
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Nav buttons */}
+                    <div className="flex justify-center gap-4 mt-8">
+                        <button onClick={() => setStep(Math.max(0, step - 1))}
+                            disabled={step === 0}
+                            className="px-5 py-2.5 rounded-xl font-medium text-sm glass disabled:opacity-30 disabled:cursor-not-allowed hover:bg-white/5 transition-all">
+                            ← Previous
+                        </button>
+                        <button onClick={() => setStep(Math.min(STEPS.length - 1, step + 1))}
+                            disabled={step === STEPS.length - 1}
+                            className="px-5 py-2.5 rounded-xl font-medium text-sm bg-green-500/10 border border-green-500/30 text-green-400 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-green-500/20 transition-all">
+                            Next →
+                        </button>
+                    </div>
+                </div>
+            );
+        };
+
+        // Render the component
+        ReactDOM.render(<ColBERTIllustrated />, document.getElementById('colbert-illustrated-root'));
+    })();
+</script>
+<!-- ═══════════════════════════ SIMULATION ═══════════════════════════ -->
+<script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+
+        // =============================================================================
+        // LOAD JSON FROM exp/ FOLDER
+        // =============================================================================
+        // 
+        // Setup:
+        // 1. Create folder: exp/
+        // 2. Put your JSON files in exp/: exp/query1.json, exp/query2.json, etc.
+        // 3. Create exp/index.json with list of files:
+        //    ["query1.json", "query2.json", "query3.json"]
+        //
+        // Or run: python generate_manifest.py
+        //
+        // =============================================================================
+        
+        const EXP_FOLDER = 'exp';
+        
+        // Fetch the manifest and pick a random JSON file
+        const fetchRandomDataset = async () => {
+            try {
+                // Load manifest
+                const manifestRes = await fetch(`${EXP_FOLDER}/index.json`);
+                if (!manifestRes.ok) {
+                    console.log('No exp/index.json found, using embedded data or dummy');
+                    return null;
+                }
+                
+                const fileList = await manifestRes.json();
+                if (!fileList || fileList.length === 0) {
+                    console.log('Manifest is empty');
+                    return null;
+                }
+                
+                // Pick random file
+                const randomFile = fileList[Math.floor(Math.random() * fileList.length)];
+                console.log(`Loading: ${EXP_FOLDER}/${randomFile}`);
+                
+                // Fetch the JSON
+                const dataRes = await fetch(`${EXP_FOLDER}/${randomFile}`);
+                if (!dataRes.ok) {
+                    console.error(`Failed to load ${randomFile}`);
+                    return null;
+                }
+                
+                const data = await dataRes.json();
+                data._source_file = randomFile;
+                return data;
+            } catch (err) {
+                console.error('Error loading dataset:', err);
+                return null;
+            }
+        };
+        
+        // Get count of available datasets
+        const fetchDatasetCount = async () => {
+            try {
+                const res = await fetch(`${EXP_FOLDER}/index.json`);
+                if (!res.ok) return 0;
+                const list = await res.json();
+                return list.length;
+            } catch {
+                return 0;
+            }
+        };
+
+        // =============================================================================
+        // EMBEDDED JSON DATA (fallback if no exp/ folder)
+        // =============================================================================
+        const EMBEDDED_DATASETS = [
+            // PASTE YOUR JSON DATA HERE AS FALLBACK
+        ];
+        
+        const getRandomEmbeddedDataset = () => {
+            if (EMBEDDED_DATASETS.length === 0) return null;
+            const idx = Math.floor(Math.random() * EMBEDDED_DATASETS.length);
+            return EMBEDDED_DATASETS[idx];
+        };
+
+        // =============================================================================
+        // DATA GENERATION
+        // =============================================================================
+        
+        const generateDummyData = (config = {}) => {
+            const { N = 15, T = 10, K = 5, seed = 42 } = config;
+            
+            const seededRandom = (s) => {
+                const x = Math.sin(s++) * 10000;
+                return x - Math.floor(x);
+            };
+            let seedVal = seed;
+            const random = () => seededRandom(seedVal++);
+            
+            const docNames = [
+                "Climate Report", "AI Safety", "Quantum Computing", "Neural Networks",
+                "Data Privacy", "Renewable Energy", "Space Exploration", "Genomics",
+                "Economics", "Cybersecurity", "Machine Learning", "Cloud Computing",
+                "Blockchain", "IoT Systems", "5G Networks", "Robotics", "Biotech",
+                "Smart Cities", "AR/VR", "Edge Computing"
+            ].slice(0, N);
+            
+            const queryTokens = ["what", "are", "the", "latest", "advances", "in", "AI", 
+                                 "and", "ML", "research", "?", "help"].slice(0, T);
+            
+            const fullScores = [];
+            for (let i = 0; i < N; i++) {
+                const row = [];
+                const baseScore = i < K ? 0.55 + random() * 0.4 : random() * 0.5;
+                for (let t = 0; t < T; t++) {
+                    row.push(Math.max(0.05, baseScore * (0.3 + random() * 0.7)));
+                }
+                fullScores.push(row);
+            }
+            
+            // Shuffle
+            const permutation = Array.from({length: N}, (_, i) => i);
+            for (let i = N - 1; i > 0; i--) {
+                const j = Math.floor(random() * (i + 1));
+                [permutation[i], permutation[j]] = [permutation[j], permutation[i]];
+            }
+            
+            const shuffledScores = permutation.map(i => fullScores[i]);
+            const shuffledNames = permutation.map(i => docNames[i]);
+            
+            const totalScores = shuffledScores.map((row, i) => ({
+                docId: i,
+                score: row.reduce((a, b) => a + b, 0)
+            }));
+            totalScores.sort((a, b) => b.score - a.score);
+            const trueTopK = new Set(totalScores.slice(0, K).map(d => d.docId));
+            const groundTruthOrder = totalScores.map(d => d.docId);
+            
+            return { N, T, K, docNames: shuffledNames, queryTokens, fullScores: shuffledScores, trueTopK, groundTruthOrder, totalScores };
+        };
+
+        // Load from JSON
+        const loadFromJSON = (jsonData) => {
+            try {
+                const { N, T, K, full_scores, doc_names, query_tokens, reveals, decisions } = jsonData;
+                
+                console.log(`Loading JSON: N=${N}, T=${T}, K=${K}`);
+                console.log(`Reveals: ${reveals ? reveals.length : 0}, Decisions: ${decisions ? decisions.length : 0}`);
+                
+                if (!full_scores || !N || !T || !K) {
+                    throw new Error("Missing required fields: N, T, K, or full_scores");
+                }
+                
+                const totalScores = full_scores.map((row, i) => ({
+                    docId: i,
+                    score: row.reduce((a, b) => a + b, 0)
+                }));
+                totalScores.sort((a, b) => b.score - a.score);
+                const trueTopK = new Set(totalScores.slice(0, K).map(d => d.docId));
+                const groundTruthOrder = totalScores.map(d => d.docId);
+                
+                // Convert pre-computed reveals/decisions from Python logger to history format
+                let precomputedHistory = null;
+                if (reveals && Array.isArray(reveals) && reveals.length > 0) {
+                    precomputedHistory = convertPrecomputedToHistory(
+                        N, T, K, full_scores, trueTopK, reveals, decisions, 
+                        jsonData.bounds_history, jsonData.final_topk
+                    );
+                    console.log(`Precomputed history: ${precomputedHistory ? precomputedHistory.length + ' steps' : 'null'}`);
+                }
+                
+                return {
+                    N, T, K,
+                    docNames: doc_names || Array.from({length: N}, (_, i) => `Doc ${i}`),
+                    queryTokens: query_tokens || Array.from({length: T}, (_, t) => `t${t}`),
+                    fullScores: full_scores,
+                    trueTopK,
+                    groundTruthOrder,
+                    totalScores,
+                    precomputedHistory
+                };
+            } catch (error) {
+                console.error("Error loading JSON:", error);
+                alert("Error loading JSON: " + error.message);
+                return null;
+            }
+        };
+        
+        // Convert pre-computed reveals/decisions from Python logger to history format
+        const convertPrecomputedToHistory = (N, T, K, fullScores, trueTopK, reveals, decisions, boundsHistory, finalTopK) => {
+            console.log("=== Converting precomputed history ===");
+            console.log("N:", N, "T:", T, "K:", K);
+            console.log("Reveals count:", reveals ? reveals.length : 0);
+            console.log("Decisions count:", decisions ? decisions.length : 0);
+            console.log("Bounds history count:", boundsHistory ? boundsHistory.length : 0);
+            console.log("Final TopK:", finalTopK);
+            
+            if (!reveals || reveals.length === 0) {
+                console.error("No reveals data found");
+                return null;
+            }
+            
+            const history = [];
+            const revealed = Array.from({length: N}, () => Array(T).fill(false));
+            
+            // Group reveals by step - reveals format: [step, docId, tokenId, value]
+            const revealsByStep = {};
+            for (let i = 0; i < reveals.length; i++) {
+                const reveal = reveals[i];
+                if (!reveal || reveal.length < 4) continue;
+                const step = reveal[0];
+                const docId = reveal[1];
+                const tokenId = reveal[2];
+                const value = reveal[3];
+                
+                if (!revealsByStep[step]) revealsByStep[step] = [];
+                revealsByStep[step].push({ docId, tokenId, value });
+            }
+            
+            console.log("Reveals by step:", Object.keys(revealsByStep).length, "unique steps");
+            
+            // Group bounds by step: [step, docId, LCB, UCB, S_hat]
+            const boundsByStep = {};
+            if (boundsHistory && boundsHistory.length > 0) {
+                for (let i = 0; i < boundsHistory.length; i++) {
+                    const b = boundsHistory[i];
+                    if (!b || b.length < 5) continue;
+                    const step = b[0];
+                    const docId = b[1];
+                    if (!boundsByStep[step]) boundsByStep[step] = {};
+                    boundsByStep[step][docId] = {
+                        lcb: b[2],
+                        ucb: b[3],
+                        estScore: b[4]
+                    };
+                }
+                console.log("Bounds by step:", Object.keys(boundsByStep).length, "steps with bounds");
+            }
+            
+            // Group decisions by step: [step, dK, b, lcbDK, ucbB, gap]
+            const decisionsByStep = {};
+            if (decisions && decisions.length > 0) {
+                for (let i = 0; i < decisions.length; i++) {
+                    const dec = decisions[i];
+                    if (!dec || dec.length < 6) continue;
+                    const step = dec[0];
+                    decisionsByStep[step] = { 
+                        dK: dec[1], 
+                        b: dec[2], 
+                        lcbDK: dec[3], 
+                        ucbB: dec[4], 
+                        gap: dec[5] 
+                    };
+                }
+            }
+            
+            const stepKeys = Object.keys(revealsByStep).map(Number);
+            if (stepKeys.length === 0) {
+                console.error("No steps found in reveals");
+                return null;
+            }
+            const maxStep = Math.max(...stepKeys);
+            console.log("Max step:", maxStep);
+            
+            // Track partial sums for each doc
+            const partialSum = Array(N).fill(0);
+            const revealCount = Array(N).fill(0);
+            
+            for (let step = 0; step <= maxStep; step++) {
+                // Apply reveals for this step
+                if (revealsByStep[step]) {
+                    revealsByStep[step].forEach(({ docId, tokenId, value }) => {
+                        if (docId >= 0 && docId < N && tokenId >= 0 && tokenId < T) {
+                            if (!revealed[docId][tokenId]) {
+                                revealed[docId][tokenId] = true;
+                                partialSum[docId] += value;
+                                revealCount[docId]++;
+                            }
+                        }
+                    });
+                }
+                
+                // Build estimates - prefer bounds_history data if available
+                const estimates = [];
+                const stepBounds = boundsByStep[step];
+                
+                for (let docId = 0; docId < N; docId++) {
+                    let estScore, lcb, ucb;
+                    
+                    if (stepBounds && stepBounds[docId]) {
+                        // Use actual bounds from Python logger
+                        estScore = stepBounds[docId].estScore;
+                        lcb = stepBounds[docId].lcb;
+                        ucb = stepBounds[docId].ucb;
+                    } else {
+                        // Fallback: compute from reveals
+                        const count = revealCount[docId];
+                        const sum = partialSum[docId];
+                        const mu = count > 0 ? sum / count : 0;
+                        estScore = T * mu;
+                        const remaining = T - count;
+                        lcb = sum;
+                        ucb = sum + remaining;
+                    }
+                    
+                    estimates.push({
+                        docId, 
+                        estScore, 
+                        lcb, 
+                        ucb, 
+                        count: revealCount[docId],
+                        partialSum: partialSum[docId],
+                        isTrue: trueTopK.has(docId)
+                    });
+                }
+                estimates.sort((a, b) => b.estScore - a.estScore);
+                
+                // Get decision info for this step
+                const decision = decisionsByStep[step];
+                let iPlus, iMinus, gap;
+                
+                if (decision) {
+                    iPlus = estimates.find(e => e.docId === decision.dK);
+                    iMinus = estimates.find(e => e.docId === decision.b);
+                    gap = decision.gap;
+                    if (iPlus) iPlus.lcb = decision.lcbDK;
+                    if (iMinus) iMinus.ucb = decision.ucbB;
+                } else {
+                    const winners = estimates.slice(0, K);
+                    const losers = estimates.slice(K);
+                    iPlus = winners.length > 0 ? winners.reduce((min, d) => d.lcb < min.lcb ? d : min, winners[0]) : null;
+                    iMinus = losers.length > 0 ? losers.reduce((max, d) => d.ucb > max.ucb ? d : max, losers[0]) : null;
+                    gap = (iPlus && iMinus) ? iPlus.lcb - iMinus.ucb : -999;
+                }
+                
+                // Get the last reveal for highlighting
+                const stepReveals = revealsByStep[step];
+                const lastReveal = stepReveals && stepReveals.length > 0 ? stepReveals[stepReveals.length - 1] : null;
+                
+                const isLastStep = step === maxStep;
+                
+                // For final step, reorder estimates to match final_topk if available
+                let finalEstimates = estimates;
+                if (isLastStep && finalTopK && finalTopK.length > 0) {
+                    // Create a map for quick lookup
+                    const estMap = {};
+                    estimates.forEach(e => { estMap[e.docId] = e; });
+                    
+                    // Put finalTopK docs first in order
+                    const topKEstimates = finalTopK.map(docId => estMap[docId]).filter(Boolean);
+                    const otherEstimates = estimates.filter(e => !finalTopK.includes(e.docId));
+                    otherEstimates.sort((a, b) => b.estScore - a.estScore);
+                    finalEstimates = [...topKEstimates, ...otherEstimates];
+                    
+                    console.log("Final step - using final_topk order:", finalTopK);
+                }
+                
+                history.push({
+                    step,
+                    docId: lastReveal ? lastReveal.docId : -1,
+                    tokenId: lastReveal ? lastReveal.tokenId : -1,
+                    revealed: revealed.map(row => [...row]),
+                    estimates: finalEstimates,
+                    currentTopK: finalEstimates.slice(0, K),
+                    iPlus,
+                    iMinus,
+                    gap,
+                    finished: gap >= 0 || isLastStep
+                });
+            }
+            
+            console.log("=== History conversion complete ===");
+            console.log("Total history steps:", history.length);
+            if (history.length > 0) {
+                const last = history[history.length-1];
+                console.log("Final step top-K:", last.currentTopK.map(e => e.docId));
+            }
+            return history;
+        };
+
+        // =============================================================================
+        // SIMULATIONS
+        // =============================================================================
+        
+        // Full ColBERT - exhaustive column by column
+        const simulateFullColBERT = (data) => {
+            const { N, T, fullScores, trueTopK, K } = data;
+            const history = [];
+            const revealed = Array.from({length: N}, () => Array(T).fill(false));
+            let step = 0;
+            
+            for (let t = 0; t < T; t++) {
+                for (let i = 0; i < N; i++) {
+                    revealed[i][t] = true;
+                    
+                    const estimates = [];
+                    for (let docId = 0; docId < N; docId++) {
+                        let sum = 0, count = 0;
+                        for (let tt = 0; tt < T; tt++) {
+                            if (revealed[docId][tt]) {
+                                sum += fullScores[docId][tt];
+                                count++;
+                            }
+                        }
+                        estimates.push({ docId, estScore: sum, count, isTrue: trueTopK.has(docId) });
+                    }
+                    estimates.sort((a, b) => b.estScore - a.estScore);
+                    
+                    history.push({
+                        step, docId: i, tokenId: t,
+                        revealed: revealed.map(row => [...row]),
+                        estimates,
+                        currentTopK: estimates.slice(0, K),
+                        finished: t === T - 1 && i === N - 1
+                    });
+                    step++;
+                }
+            }
+            return history;
+        };
+
+        // Col-Bandit adaptive
+        const simulateColBandit = (data, config = {}) => {
+            const { alpha_ef = 0.4, epsilon = 0.1, delta = 0.01 } = config;
+            const { N, T, K, fullScores, trueTopK } = data;
+            
+            const revealed = Array.from({length: N}, () => Array(T).fill(false));
+            const n = Array(N).fill(0);
+            const partialSum = Array(N).fill(0);
+            const partialSqSum = Array(N).fill(0);
+            
+            const history = [];
+            let step = 0;
+            
+            const computeState = () => {
+                const estimates = [];
+                for (let i = 0; i < N; i++) {
+                    let lcb, ucb, estScore;
+                    if (n[i] > 0) {
+                        const mu = partialSum[i] / n[i];
+                        estScore = T * mu;
+                        const variance = n[i] > 1 ? (partialSqSum[i] / n[i]) - mu * mu : 0.25;
+                        const sigma = Math.sqrt(Math.max(0, variance));
+                        const rho = n[i] <= T/2 ? 1 - (n[i] - 1) / T : (1 - n[i]/T) * (1 + 1/n[i]);
+                        const r_eff = alpha_ef * T * sigma * Math.sqrt(2 * Math.log(N / delta) / n[i]) * Math.sqrt(Math.max(0, rho));
+                        const remaining = T - n[i];
+                        lcb = Math.max(partialSum[i], estScore - r_eff);
+                        ucb = Math.min(partialSum[i] + remaining, estScore + r_eff);
+                    } else {
+                        estScore = 0; lcb = 0; ucb = T;
+                    }
+                    estimates.push({ docId: i, estScore, lcb, ucb, count: n[i], isTrue: trueTopK.has(i) });
+                }
+                estimates.sort((a, b) => b.estScore - a.estScore);
+                
+                const currentTopK = estimates.slice(0, K);
+                const outside = estimates.slice(K);
+                const iPlus = currentTopK.reduce((min, d) => d.lcb < min.lcb ? d : min, currentTopK[0]);
+                const iMinus = outside.length > 0 ? outside.reduce((max, d) => d.ucb > max.ucb ? d : max, outside[0]) : null;
+                const gap = iMinus ? iPlus.lcb - iMinus.ucb : Infinity;
+                
+                return { estimates, currentTopK, iPlus, iMinus, gap };
+            };
+            
+            // Initialize: 1 cell per doc
+            for (let i = 0; i < N; i++) {
+                const t = Math.floor(Math.random() * T);
+                revealed[i][t] = true;
+                n[i]++;
+                partialSum[i] += fullScores[i][t];
+                partialSqSum[i] += fullScores[i][t] ** 2;
+            }
+            
+            let state = computeState();
+            history.push({
+                step, docId: -1, tokenId: -1,
+                revealed: revealed.map(row => [...row]),
+                ...state, finished: false
+            });
+            step++;
+            
+            // Main loop
+            while (step < N * T) {
+                state = computeState();
+                
+                if (state.gap >= 0) {
+                    history.push({
+                        step, docId: -1, tokenId: -1,
+                        revealed: revealed.map(row => [...row]),
+                        ...state, finished: true
+                    });
+                    break;
+                }
+                
+                const { iPlus, iMinus } = state;
+                let iStar = (iPlus.ucb - iPlus.lcb) >= (iMinus.ucb - iMinus.lcb) ? iPlus.docId : iMinus.docId;
+                
+                let unrevealed = [];
+                for (let t = 0; t < T; t++) {
+                    if (!revealed[iStar][t]) unrevealed.push(t);
+                }
+                
+                if (unrevealed.length === 0) {
+                    const altDoc = iStar === iPlus.docId ? iMinus.docId : iPlus.docId;
+                    for (let t = 0; t < T; t++) {
+                        if (!revealed[altDoc][t]) unrevealed.push(t);
+                    }
+                    if (unrevealed.length > 0) iStar = altDoc;
+                }
+                
+                if (unrevealed.length === 0) break;
+                
+                const tStar = Math.random() < epsilon
+                    ? unrevealed[Math.floor(Math.random() * unrevealed.length)]
+                    : unrevealed[0];
+                
+                revealed[iStar][tStar] = true;
+                n[iStar]++;
+                partialSum[iStar] += fullScores[iStar][tStar];
+                partialSqSum[iStar] += fullScores[iStar][tStar] ** 2;
+                
+                state = computeState();
+                history.push({
+                    step, docId: iStar, tokenId: tStar,
+                    revealed: revealed.map(row => [...row]),
+                    ...state, finished: false
+                });
+                step++;
+            }
+            
+            return history;
+        };
+
+        // =============================================================================
+        // COMPONENTS
+        // =============================================================================
+        
+        // Density Chart - shows reveal % per document, sorted by score
+        const DensityChart = ({ data, revealed, mode, finished, estimates }) => {
+            const { fullScores, trueTopK, K, T, N } = data;
+            
+            if (!revealed || !fullScores) {
+                return (
+                    <div className="glass rounded-xl p-3">
+                        <div className="text-gray-500 text-center text-sm">Loading...</div>
+                    </div>
+                );
+            }
+            
+            const totalCells = N * T;
+            let revealedCells = 0;
+            
+            const isColBandit = mode === 'colbandit';
+            const borderColor = finished ? (isColBandit ? 'border-green-500 winner-glow' : 'border-gray-500') : 'border-gray-700';
+            
+            // Sort documents by estimated score
+            let sortedDocs;
+            if (estimates && estimates.length > 0) {
+                sortedDocs = estimates.map(e => e.docId);
+            } else {
+                const scores = fullScores.map((row, i) => ({ docId: i, score: row.reduce((a, b) => a + b, 0) }));
+                scores.sort((a, b) => b.score - a.score);
+                sortedDocs = scores.map(s => s.docId);
+            }
+            
+            // Compute reveal count per doc
+            const docData = sortedDocs.map((docId, rank) => {
+                let count = 0;
+                for (let t = 0; t < T; t++) {
+                    if (revealed[docId] && revealed[docId][t]) count++;
+                }
+                revealedCells += count;
+                return { 
+                    docId, 
+                    rank,
+                    count, 
+                    pct: (count / T) * 100,
+                    isTrue: trueTopK.has(docId),
+                    isTopK: rank < K
+                };
+            });
+            
+            const coverage = (revealedCells / totalCells * 100).toFixed(0);
+            
+            // Stats
+            const topKData = docData.filter(d => d.isTopK);
+            const otherData = docData.filter(d => !d.isTopK);
+            const avgTopK = topKData.length > 0 ? (topKData.reduce((s, d) => s + d.pct, 0) / topKData.length).toFixed(0) : 0;
+            const avgOther = otherData.length > 0 ? (otherData.reduce((s, d) => s + d.pct, 0) / otherData.length).toFixed(0) : 0;
+            
+            // Bar height calculation
+            const maxHeight = 200;
+            const barHeight = Math.max(2, Math.min(8, Math.floor(maxHeight / N)));
+            
+            return (
+                <div className={`glass rounded-xl p-3 border-2 ${borderColor} transition-all duration-300`}>
+                    <div className="flex justify-between items-center mb-2">
+                        <h3 className={`font-bold ${isColBandit ? 'text-green-400' : 'text-red-400'}`}>
+                            {isColBandit ? '🟢 Col-Bandit' : '🔴 Full ColBERT'}
+                            <span className="text-gray-500 font-normal text-sm ml-2">
+                                ({coverage}% coverage)
+                            </span>
+                        </h3>
+                    </div>
+                    
+                    {/* Density bars */}
+                    <div className="flex gap-2">
+                        {/* Doc labels */}
+                        <div className="flex flex-col text-xs text-gray-500 justify-between" style={{ width: 50, height: barHeight * N }}>
+                            <span>Rank 1</span>
+                            <span className="text-yellow-400">Top-{K} ─</span>
+                            <span className="text-gray-600">Rank {N}</span>
+                        </div>
+                        
+                        {/* Bars */}
+                        <div className="flex-1">
+                            <div 
+                                className="bg-gray-900 rounded overflow-hidden relative"
+                                style={{ height: barHeight * N }}
+                            >
+                                {docData.map((doc, idx) => {
+                                    const barColor = isColBandit
+                                        ? (doc.isTrue ? 'bg-green-500' : 'bg-green-700')
+                                        : (doc.isTrue ? 'bg-red-400' : 'bg-red-600');
+                                    
+                                    return (
+                                        <div 
+                                            key={doc.docId}
+                                            className="flex items-center"
+                                            style={{ height: barHeight }}
+                                        >
+                                            <div 
+                                                className={`h-full ${barColor}`}
+                                                style={{ width: `${doc.pct}%`, minWidth: doc.pct > 0 ? 1 : 0 }}
+                                            />
+                                        </div>
+                                    );
+                                })}
+                                
+                                {/* Top-K separator */}
+                                <div 
+                                    className="absolute left-0 right-0 border-t-2 border-yellow-500 pointer-events-none"
+                                    style={{ top: barHeight * K }}
+                                />
+                            </div>
+                            
+                            {/* X-axis */}
+                            <div className="flex justify-between text-xs text-gray-500 mt-1">
+                                <span>0%</span>
+                                <span>Tokens Revealed →</span>
+                                <span>100%</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    {/* Summary */}
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                        <div className={`rounded p-2 text-center ${isColBandit ? 'bg-green-900/30' : 'bg-red-900/30'}`}>
+                            <div className={`font-bold text-lg ${isColBandit ? 'text-green-400' : 'text-red-400'}`}>
+                                {avgTopK}%
+                            </div>
+                            <div className="text-gray-400 text-xs">Avg Top-{K} density</div>
+                        </div>
+                        <div className={`rounded p-2 text-center ${isColBandit ? 'bg-green-900/30' : 'bg-red-900/30'}`}>
+                            <div className={`font-bold text-lg ${isColBandit ? 'text-green-400' : 'text-red-400'}`}>
+                                {avgOther}%
+                            </div>
+                            <div className="text-gray-400 text-xs">Avg others density</div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // Rankings
+        const Rankings = ({ data, estimates, mode, iPlus, iMinus, gap }) => {
+            const { K, trueTopK } = data;
+            if (!estimates || estimates.length === 0) {
+                return (
+                    <div className="glass rounded-xl p-3">
+                        <div className="text-gray-500 text-center text-sm">Loading rankings...</div>
+                    </div>
+                );
+            }
+            
+            const isColBandit = mode === 'colbandit';
+            const headerColor = isColBandit ? 'text-green-400' : 'text-red-400';
+            
+            // Sort appropriately
+            let displayDocs;
+            if (isColBandit) {
+                const winners = estimates.slice(0, K).sort((a, b) => b.lcb - a.lcb);
+                const losers = estimates.slice(K, K + 3).sort((a, b) => b.ucb - a.ucb);
+                displayDocs = [...winners, ...losers];
+            } else {
+                displayDocs = estimates.slice(0, K + 3);
+            }
+            
+            const maxScore = Math.max(...displayDocs.map(d => d.ucb || d.estScore || 1), 1);
+            
+            return (
+                <div className="glass rounded-xl p-3">
+                    <div className="flex justify-between items-center mb-2">
+                        <h4 className={`font-bold text-sm ${headerColor}`}>Rankings</h4>
+                        {isColBandit && gap !== undefined && (
+                            <span className={`text-xs px-2 py-0.5 rounded mono ${gap >= 0 ? 'bg-green-900 text-green-300' : 'bg-gray-700 text-gray-300'}`}>
+                                Gap: {gap.toFixed(2)} {gap >= 0 ? '✓' : ''}
+                            </span>
+                        )}
+                    </div>
+                    
+                    <div className="space-y-1">
+                        {displayDocs.map((doc, idx) => {
+                            const isTrue = trueTopK.has(doc.docId);
+                            const isWinner = idx < K;
+                            const isIPlusDoc = isColBandit && doc.docId === iPlus?.docId;
+                            const isIMinusDoc = isColBandit && doc.docId === iMinus?.docId;
+                            
+                            const estWidth = Math.max(5, ((doc.estScore || 0) / maxScore) * 100);
+                            const lcbWidth = isColBandit ? Math.max(2, ((doc.lcb || 0) / maxScore) * 100) : estWidth;
+                            const ucbWidth = isColBandit ? Math.min(100, ((doc.ucb || doc.estScore) / maxScore) * 100) : estWidth;
+                            
+                            return (
+                                <div key={doc.docId}>
+                                    {idx === K && <div className="border-t border-yellow-500/50 my-1"></div>}
+                                    <div className={`flex items-center gap-1 py-0.5 px-1 rounded ${(isIPlusDoc || isIMinusDoc) ? 'bg-blue-900/30' : ''}`}>
+                                        <span className={`w-4 text-xs ${isWinner ? 'text-yellow-400 font-bold' : 'text-gray-600'}`}>
+                                            {idx + 1}
+                                        </span>
+                                        <span className={`w-6 text-xs font-bold ${isTrue ? 'text-green-400' : 'text-red-400'}`}>
+                                            D{doc.docId}
+                                        </span>
+                                        
+                                        <div className="flex-1 h-4 bg-gray-700 rounded relative overflow-hidden">
+                                            {/* UCB background */}
+                                            {isColBandit && (
+                                                <div 
+                                                    className="absolute h-full bg-gray-600/60 transition-all" 
+                                                    style={{ width: `${ucbWidth}%` }} 
+                                                />
+                                            )}
+                                            {/* Est score bar */}
+                                            <div 
+                                                className={`absolute h-full transition-all ${isTrue ? 'bg-green-500' : 'bg-red-500'}`}
+                                                style={{ width: `${estWidth}%`, opacity: 0.7 }}
+                                            />
+                                            {/* LCB line */}
+                                            {isColBandit && (
+                                                <div 
+                                                    className="absolute h-full w-0.5 bg-white transition-all" 
+                                                    style={{ left: `${lcbWidth}%` }} 
+                                                />
+                                            )}
+                                        </div>
+                                        
+                                        <span className="w-6 text-xs text-gray-500 mono text-right">
+                                            {doc.count || 0}
+                                        </span>
+                                        
+                                        {isIPlusDoc && <span className="text-blue-400 text-xs font-bold w-4">i⁺</span>}
+                                        {isIMinusDoc && <span className="text-orange-400 text-xs font-bold w-4">i⁻</span>}
+                                        {!isIPlusDoc && !isIMinusDoc && <span className="w-4"></span>}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            );
+        };
+
+        // Stats
+        const Stats = ({ colbertCells, colbanditState, data }) => {
+            const { N, T, K, trueTopK } = data;
+            const totalCells = N * T;
+            
+            // Safely count revealed cells
+            const countRevealed = (revealed) => {
+                if (!revealed || !Array.isArray(revealed)) return 0;
+                let count = 0;
+                for (let d = 0; d < revealed.length; d++) {
+                    if (revealed[d]) {
+                        for (let t = 0; t < revealed[d].length; t++) {
+                            if (revealed[d][t]) count++;
+                        }
+                    }
+                }
+                return count;
+            };
+            
+            const colbanditCells = countRevealed(colbanditState?.revealed);
+            
+            const colbanditFinished = colbanditState?.finished;
+            const savings = colbanditFinished ? ((1 - colbanditCells / totalCells) * 100).toFixed(0) : '—';
+            const speedup = colbanditFinished && colbanditCells > 0 ? (totalCells / colbanditCells).toFixed(1) : '—';
+            
+            // Calculate recall for colbandit
+            let recall = '—';
+            if (colbanditFinished && colbanditState?.currentTopK) {
+                const foundTopK = new Set(colbanditState.currentTopK.map(e => e.docId));
+                const correct = [...trueTopK].filter(d => foundTopK.has(d)).length;
+                recall = ((correct / K) * 100).toFixed(0);
+            }
+            
+            return (
+                <div className="grid grid-cols-5 gap-2 mb-4">
+                    <div className="glass rounded-lg p-2 text-center">
+                        <div className="text-xl font-bold text-red-400">{colbertCells}</div>
+                        <div className="text-xs text-gray-400">ColBERT</div>
+                    </div>
+                    <div className="glass rounded-lg p-2 text-center">
+                        <div className="text-xl font-bold text-green-400">{colbanditCells}</div>
+                        <div className="text-xs text-gray-400">Col-Bandit</div>
+                    </div>
+                    <div className="glass rounded-lg p-2 text-center">
+                        <div className={`text-xl font-bold ${colbanditFinished ? 'text-blue-400' : 'text-gray-500'}`}>{savings}%</div>
+                        <div className="text-xs text-gray-400">Savings</div>
+                    </div>
+                    <div className="glass rounded-lg p-2 text-center">
+                        <div className={`text-xl font-bold ${colbanditFinished ? 'text-purple-400' : 'text-gray-500'}`}>{speedup}×</div>
+                        <div className="text-xs text-gray-400">Speedup</div>
+                    </div>
+                    <div className="glass rounded-lg p-2 text-center">
+                        <div className={`text-xl font-bold ${recall === '100' ? 'text-green-400' : recall === '—' ? 'text-gray-500' : 'text-yellow-400'}`}>{recall}%</div>
+                        <div className="text-xs text-gray-400">Recall@{K}</div>
+                    </div>
+                </div>
+            );
+        };
+
+        // Progress - only shows ColBandit since ColBERT is static
+        const Progress = ({ colbanditStep, colbanditMax, colbanditFinished }) => (
+            <div className="glass rounded-lg p-3 mb-4">
+                <div className="flex justify-between text-xs mb-1">
+                    <span className="text-green-400">Col-Bandit Progress {colbanditFinished ? '✓' : ''}</span>
+                    <span className="text-gray-500">Step {colbanditStep} / {colbanditMax || '?'}</span>
+                </div>
+                <div className="h-2 bg-gray-700 rounded overflow-hidden">
+                    <div 
+                        className={`h-full transition-all ${colbanditFinished ? 'bg-green-500' : 'bg-green-600'}`} 
+                        style={{ width: colbanditMax > 0 ? `${(colbanditStep / colbanditMax) * 100}%` : '0%' }} 
+                    />
+                </div>
+            </div>
+        );
+
+        // Controls
+        const Controls = ({ isPlaying, setIsPlaying, onReset, onEnd, speed, setSpeed, onRegenerate, datasetCount }) => {
+            return (
+                <div className="glass rounded-xl p-3 mb-4 flex flex-wrap items-center gap-2">
+                    <button
+                        onClick={() => setIsPlaying(!isPlaying)}
+                        className={`px-5 py-2 rounded-lg font-bold transition ${
+                            isPlaying ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'
+                        } text-white`}
+                    >
+                        {isPlaying ? '⏸ Pause' : '▶ Play'}
+                    </button>
+                    <button onClick={onReset} className="px-3 py-2 bg-gray-600 hover:bg-gray-700 rounded-lg text-white text-sm">⏮ Reset</button>
+                    <button onClick={onEnd} className="px-3 py-2 bg-gray-600 hover:bg-gray-700 rounded-lg text-white text-sm">⏭ End</button>
+                    
+                    <div className="flex items-center gap-1">
+                        <span className="text-xs text-gray-400">Speed:</span>
+                        <input type="range" min="1" max="50" value={speed} onChange={(e) => setSpeed(parseInt(e.target.value))} className="w-20" />
+                    </div>
+                    
+                    <div className="flex-1"></div>
+                    
+                    <button onClick={onRegenerate} className="px-3 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg text-white text-sm">
+                        🎲 New {datasetCount > 0 && <span className="text-purple-300">({datasetCount})</span>}
+                    </button>
+                </div>
+            );
+        };
+
+        // Intro
+        const Intro = ({ isLoaded }) => (
+            <div className="glass rounded-xl p-3 mb-4">
+                {isLoaded && (
+                    <div className="bg-blue-900/30 border border-blue-500/50 rounded-lg p-2 mb-3 text-center">
+                        <span className="text-blue-400 text-sm">📁 Loaded from file - replaying actual Col-Bandit execution</span>
+                    </div>
+                )}
+                <div className="grid md:grid-cols-3 gap-3 text-xs">
+                    <div className="bg-red-900/20 rounded p-2">
+                        <span className="text-red-400 font-bold">🔴 ColBERT:</span>
+                        <span className="text-gray-400 ml-1">Computes ALL N×T cells exhaustively</span>
+                    </div>
+                    <div className="bg-green-900/20 rounded p-2">
+                        <span className="text-green-400 font-bold">🟢 Col-Bandit:</span>
+                        <span className="text-gray-400 ml-1">Adaptively reveals cells until Top-K separated</span>
+                    </div>
+                    <div className="bg-blue-900/20 rounded p-2">
+                        <span className="text-blue-400 font-bold">💡 Result:</span>
+                        <span className="text-gray-400 ml-1">Same ranking, ~70-80% less computation!</span>
+                    </div>
+                </div>
+            </div>
+        );
+
+        // Legend
+        const Legend = ({ K }) => (
+            <div className="flex flex-wrap gap-3 text-xs text-gray-400 justify-center mb-4">
+                <span><span className="inline-block w-3 h-3 bg-red-500 rounded mr-1"></span>ColBERT</span>
+                <span><span className="inline-block w-3 h-3 bg-green-500 rounded mr-1"></span>Col-Bandit</span>
+                <span><span className="text-green-400">✓</span> True Top-{K}</span>
+                <span><span className="text-blue-400">i⁺</span> Weakest winner</span>
+                <span><span className="text-orange-400">i⁻</span> Strongest loser</span>
+                <span><span className="text-yellow-400">—</span> Top-{K} boundary</span>
+            </div>
+        );
+
+        // Data Loader
+        const DataLoader = ({ onLoad, onClose }) => {
+            const [jsonText, setJsonText] = useState('');
+            
+            const handleLoad = () => {
+                try {
+                    onLoad(JSON.parse(jsonText));
+                    onClose();
+                } catch (e) {
+                    alert('Invalid JSON: ' + e.message);
+                }
+            };
+            
+            return (
+                <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+                    <div className="glass rounded-xl p-4 max-w-lg w-full">
+                        <h2 className="text-lg font-bold text-white mb-3">Load Data</h2>
+                        <input type="file" accept=".json" onChange={(e) => {
+                            const file = e.target.files[0];
+                            if (file) {
+                                const reader = new FileReader();
+                                reader.onload = (e) => setJsonText(e.target.result);
+                                reader.readAsText(file);
+                            }
+                        }} className="mb-3 text-gray-400 text-sm" />
+                        <textarea
+                            value={jsonText}
+                            onChange={(e) => setJsonText(e.target.value)}
+                            className="w-full h-32 bg-gray-800 text-gray-300 rounded p-2 mono text-xs mb-3"
+                            placeholder="Paste JSON..."
+                        />
+                        <div className="flex gap-2 justify-end">
+                            <button onClick={onClose} className="px-3 py-1 bg-gray-600 rounded text-white text-sm">Cancel</button>
+                            <button onClick={handleLoad} className="px-3 py-1 bg-blue-600 rounded text-white text-sm">Load</button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // =============================================================================
+        // MAIN APP
+        // =============================================================================
+        
+        const App = () => {
+            const [data, setData] = useState(() => generateDummyData({ N: 12, T: 8, K: 4, seed: 123 }));
+            const [showLoader, setShowLoader] = useState(false);
+            const [datasetCount, setDatasetCount] = useState(0);
+            
+            // Load initial dataset from exp/ folder
+            useEffect(() => {
+                const loadInitial = async () => {
+                    // Try exp/ folder first
+                    const fetched = await fetchRandomDataset();
+                    if (fetched) {
+                        const loaded = loadFromJSON(fetched);
+                        if (loaded) {
+                            setData(loaded);
+                            return;
+                        }
+                    }
+                    // Fallback to embedded
+                    const embedded = getRandomEmbeddedDataset();
+                    if (embedded) {
+                        const loaded = loadFromJSON(embedded);
+                        if (loaded) setData(loaded);
+                    }
+                };
+                loadInitial();
+                
+                // Get count for UI
+                fetchDatasetCount().then(setDatasetCount);
+            }, []);
+            
+            const [colbertHistory, setColbertHistory] = useState([]);
+            const [colbanditHistory, setColbanditHistory] = useState([]);
+            
+            const [colbertStep, setColbertStep] = useState(0);
+            const [colbanditStep, setColbanditStep] = useState(0);
+            const [isPlaying, setIsPlaying] = useState(false);
+            const [speed, setSpeed] = useState(15);
+            
+            // Generate histories
+            useEffect(() => {
+                console.log("Generating histories for data:", data.N, "x", data.T);
+                
+                const colbert = simulateFullColBERT(data);
+                console.log("ColBERT history generated:", colbert.length, "steps");
+                setColbertHistory(colbert);
+                
+                // Use precomputed history if available, otherwise simulate
+                if (data.precomputedHistory && data.precomputedHistory.length > 0) {
+                    console.log("Using precomputed history:", data.precomputedHistory.length, "steps");
+                    setColbanditHistory(data.precomputedHistory);
+                } else {
+                    console.log("Simulating ColBandit...");
+                    const colbandit = simulateColBandit(data);
+                    console.log("ColBandit history generated:", colbandit.length, "steps");
+                    setColbanditHistory(colbandit);
+                }
+                
+                setColbertStep(0);
+                setColbanditStep(0);
+            }, [data]);
+            
+            const colbertMax = colbertHistory.length > 0 ? colbertHistory.length - 1 : 0;
+            const colbanditMax = colbanditHistory.length > 0 ? colbanditHistory.length - 1 : 0;
+            
+            const colbertState = colbertHistory[colbertStep] || { 
+                revealed: Array.from({length: data.N}, () => Array(data.T).fill(false)), 
+                estimates: [],
+                finished: false
+            };
+            const colbanditState = colbanditHistory[colbanditStep] || { 
+                revealed: Array.from({length: data.N}, () => Array(data.T).fill(false)), 
+                estimates: [],
+                finished: false,
+                iPlus: null,
+                iMinus: null,
+                gap: -999
+            };
+            
+            // Static ColBERT - always 100% revealed
+            const colbertFullRevealed = useMemo(() => 
+                Array.from({length: data.N}, () => Array(data.T).fill(true)), 
+                [data.N, data.T]
+            );
+            
+            // ColBERT final estimates - computed from full scores
+            const colbertFinalEstimates = useMemo(() => {
+                const estimates = data.fullScores.map((scores, docId) => ({
+                    docId,
+                    estScore: scores.reduce((a, b) => a + b, 0),
+                    count: data.T,
+                    isTrue: data.trueTopK.has(docId)
+                }));
+                estimates.sort((a, b) => b.estScore - a.estScore);
+                return estimates;
+            }, [data]);
+            
+            const colbanditFinished = colbanditState?.finished || false;
+            
+            // Debug logging
+            useEffect(() => {
+                console.log("ColBERT history length:", colbertHistory.length);
+                console.log("ColBandit history length:", colbanditHistory.length);
+                console.log("Has precomputed:", !!data.precomputedHistory);
+            }, [colbertHistory, colbanditHistory, data]);
+            
+            // Animation - only ColBandit (ColBERT is static)
+            useEffect(() => {
+                if (!isPlaying) return;
+                if (colbanditHistory.length === 0) {
+                    console.log("Waiting for ColBandit history to load...");
+                    return;
+                }
+                
+                if (colbanditStep >= colbanditMax) {
+                    setIsPlaying(false);
+                    return;
+                }
+                
+                const interval = setInterval(() => {
+                    setColbanditStep(prev => Math.min(prev + 1, colbanditMax));
+                }, 200 / speed);
+                
+                return () => clearInterval(interval);
+            }, [isPlaying, colbanditStep, colbanditMax, speed, colbanditHistory.length]);
+            
+            return (
+                <div className="min-h-screen p-3">
+                    <div className="max-w-5xl mx-auto">
+                        {/* Header */}
+                        <header className="text-center mb-4">
+                            <h1 className="text-2xl font-bold">
+                                <span className="gradient-text">Col-Bandit</span>
+                                <span className="text-gray-400 text-lg ml-2">vs Full ColBERT</span>
+                            </h1>
+                        </header>
+                        
+                        <Intro isLoaded={!!data.precomputedHistory} />
+                        
+                        <Controls
+                            isPlaying={isPlaying}
+                            setIsPlaying={setIsPlaying}
+                            onReset={() => { setColbanditStep(0); setIsPlaying(false); }}
+                            onEnd={() => { setColbanditStep(colbanditMax); setIsPlaying(false); }}
+                            speed={speed}
+                            setSpeed={setSpeed}
+                            datasetCount={datasetCount}
+                            onRegenerate={async () => {
+                                // Try exp/ folder first
+                                const fetched = await fetchRandomDataset();
+                                if (fetched) {
+                                    const loaded = loadFromJSON(fetched);
+                                    if (loaded) {
+                                        setData(loaded);
+                                        setColbanditStep(0);
+                                        setIsPlaying(false);
+                                        return;
+                                    }
+                                }
+                                // Fallback to embedded
+                                const embedded = getRandomEmbeddedDataset();
+                                if (embedded) {
+                                    const loaded = loadFromJSON(embedded);
+                                    if (loaded) {
+                                        setData(loaded);
+                                        setColbanditStep(0);
+                                        setIsPlaying(false);
+                                        return;
+                                    }
+                                }
+                                // Fallback to dummy
+                                setData(generateDummyData({ N: 12, T: 8, K: 4, seed: Math.floor(Math.random() * 10000) }));
+                                setColbanditStep(0);
+                                setIsPlaying(false);
+                            }}
+                        />
+                        
+                        <Stats 
+                            colbertCells={data.N * data.T} 
+                            colbanditState={colbanditState} 
+                            data={data} 
+                        />
+                        
+                        <Progress 
+                            colbanditStep={colbanditStep} 
+                            colbanditMax={colbanditMax}
+                            colbanditFinished={colbanditFinished}
+                        />
+                        
+                        <Legend K={data.K} />
+                        
+                        {/* Query Display */}
+                        {data.queryTokens && (
+                            <div className="glass rounded-lg p-3 mb-4">
+                                <div className="text-xs text-gray-400 mb-1">Query ({data.T} tokens):</div>
+                                <div className="flex flex-wrap gap-1">
+                                    {data.queryTokens.slice(0, 20).map((token, i) => (
+                                        <span key={i} className="px-2 py-0.5 bg-blue-900/50 text-blue-300 rounded text-sm">
+                                            {token}
+                                        </span>
+                                    ))}
+                                    {data.T > 20 && <span className="text-gray-500 text-sm">... +{data.T - 20} more</span>}
+                                </div>
+                            </div>
+                        )}
+                        
+                        {/* Side by Side */}
+                        <div className="grid md:grid-cols-2 gap-4">
+                            {/* ColBERT - Static, always 100% */}
+                            <div className="space-y-3">
+                                <Rankings
+                                    data={data}
+                                    estimates={colbertFinalEstimates}
+                                    mode="colbert"
+                                />
+                                <DensityChart
+                                    data={data}
+                                    revealed={colbertFullRevealed}
+                                    mode="colbert"
+                                    finished={true}
+                                    estimates={colbertFinalEstimates}
+                                />
+                            </div>
+                            
+                            {/* Col-Bandit - Animated */}
+                            <div className="space-y-3">
+                                <Rankings
+                                    data={data}
+                                    estimates={colbanditState?.estimates}
+                                    mode="colbandit"
+                                    iPlus={colbanditState?.iPlus}
+                                    iMinus={colbanditState?.iMinus}
+                                    gap={colbanditState?.gap}
+                                />
+                                <DensityChart
+                                    data={data}
+                                    revealed={colbanditState?.revealed || Array.from({length: data.N}, () => Array(data.T).fill(false))}
+                                    mode="colbandit"
+                                    finished={colbanditState?.finished}
+                                    estimates={colbanditState?.estimates}
+                                />
+                            </div>
+                        </div>
+                        
+                        {/* Load Button */}
+                        <div className="mt-4 text-center">
+                            <button onClick={() => setShowLoader(true)} className="px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded text-white text-sm">
+                                📁 Load JSON Data
+                            </button>
+                        </div>
+                        
+                        <footer className="text-center text-gray-600 text-xs mt-4">
+                            Col-Bandit: Zero-Shot Query-Time Pruning for Late-Interaction Retrieval
+                        </footer>
+                    </div>
+                    
+                    {showLoader && <DataLoader onLoad={(d) => {
+                        const loaded = loadFromJSON(d);
+                        if (loaded) setData(loaded);
+                    }} onClose={() => setShowLoader(false)} />}
+                </div>
+            );
+        };
+
+        ReactDOM.render(<App />, document.getElementById('simulation-root'));
+
+</script>
+</body>
+</html>
