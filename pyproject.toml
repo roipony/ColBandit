@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "colbandit"
+version = "0.1.0"
+description = "Query-time top-K identification for late-interaction (ColBERT-style) retrieval."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.9"
+authors = [{ name = "Col-Bandit authors" }]
+keywords = ["colbert", "late-interaction", "retrieval", "maxsim", "reranking", "multi-vector"]
+dependencies = ["numpy>=1.21"]
+
+# NOTE: until the vendored numkong kernel build is wired in (native/numkong),
+# `numkong` must be importable on PYTHONPATH. Once vendored, the kernel is built
+# as part of this package and this stays a single `pip install colbandit`.
+
+[project.optional-dependencies]
+torch = ["torch>=1.13"]
+dev = ["pytest>=7"]
+
+[tool.setuptools.packages.find]
+include = ["colbandit*"]
