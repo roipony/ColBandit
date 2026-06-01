@@ -6,22 +6,22 @@ Col-Bandit accelerates multi-vector reranking by *adaptively* computing only the
 cells needed to identify the exhaustive top-K, instead of scoring the full `N × T`
 query-token × document matrix. It is a drop-in scoring/reranking layer over precomputed
 token embeddings — no retraining, no index changes — and runs on x86 (AVX2) and Apple
-Silicon (NEON) via the bundled `numkong` kernel.
+Silicon (NEON) via the vendored `numkong` kernel.
 
 > Paper: *Col-Bandit: Query-Time Top-K Estimation for Late-Interaction Retrieval.*
 
 ## Install
 
 ```bash
-pip install colbandit          # builds the vendored numkong kernel (AVX2 / NEON)
+git clone <this repo> colbandit && cd colbandit
+./install.sh
 ```
 
-> **Status (v0.1.0):** the Python layer and API are complete and tested. The vendored
-> `numkong` kernel build is being wired into `native/numkong` (see Roadmap). Until then,
-> point `PYTHONPATH` at a prebuilt `numkong*.so`:
-> ```bash
-> PYTHONPATH=/path/to/numkong_lib python examples/quickstart.py
-> ```
+That's it. `install.sh` builds the vendored numkong kernel (Rust + C, ISA-probed) and
+installs the `colbandit` Python package — no `PYTHONPATH`, no library paths.
+
+**Requirements:** a C toolchain, [Rust / cargo](https://rustup.rs), Python ≥ 3.9.
+macOS users also need `libomp` (`brew install libomp`).
 
 ## Quickstart
 
@@ -53,13 +53,17 @@ ids, scores = cb.search(query, k=5)                         # top-5 document ids
 **Knobs.** `alpha_ef ∈ (0,1]` is the single cost–fidelity knob: smaller prunes more
 aggressively (faster, lower fidelity); `alpha_ef=1` is the conservative corner. `M` is the
 rescore margin (keep `K+M` survivors, rescore exactly). `n_threads` parallelises *across
-queries* (throughput).
+queries* (throughput, not single-query latency).
 
-## Roadmap
+## Repo layout
 
-- [ ] Vendor the `numkong` kernel source under `native/` and wire `pip install` to compile it (AVX2 + NEON).
-- [ ] macOS (Apple Silicon / NEON) wheel + perf validation.
-- [ ] Optional `colbandit[encoder]` extra: encode raw text with a ColBERT model.
+```
+colbandit/                Python package
+native/numkong/           vendored CB-NK kernel (Rust + C, ISA-probed)
+examples/quickstart.py    minimal example
+tests/test_smoke.py       smoke tests
+install.sh                one-shot installer
+```
 
 ## License
 
