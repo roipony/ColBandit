@@ -55,6 +55,21 @@ aggressively (faster, lower fidelity); `alpha_ef=1` is the conservative corner. 
 rescore margin (keep `K+M` survivors, rescore exactly). `n_threads` parallelises *across
 queries* (throughput, not single-query latency).
 
+## Sanity check
+
+After `./install.sh`:
+
+```bash
+# 1) tests (top-K correctness + save/load roundtrip)
+python tests/test_smoke.py
+
+# 2) benchmark vs brute-force Full-MaxSim on a planted-winner corpus
+python examples/bench.py                          # N=5000, K=5 — quick
+python examples/bench.py --N 50000 --threads 4    # larger / multi-thread
+```
+
+Both should report **Overlap@5 = 1.00** and a meaningful speedup over brute force.
+
 ## Repo layout
 
 ```
