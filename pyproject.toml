@@ -11,11 +11,10 @@ license = { text = "Apache-2.0" }
 requires-python = ">=3.9"
 authors = [{ name = "Col-Bandit authors" }]
 keywords = ["colbert", "late-interaction", "retrieval", "maxsim", "reranking", "multi-vector"]
-dependencies = ["numpy>=1.21"]
-
-# NOTE: until the vendored numkong kernel build is wired in (native/numkong),
-# `numkong` must be importable on PYTHONPATH. Once vendored, the kernel is built
-# as part of this package and this stays a single `pip install colbandit`.
+dependencies = ["numpy>=1.21", "numkong>=7.3.0"]
+# After PyPI publish: `pip install colbandit` pulls the right numkong wheel
+# for the user's platform (Linux x86_64, macOS arm64, macOS x86_64, Windows).
+# Source builds from this repo still work via `./install.sh`.
 
 [project.optional-dependencies]
 torch = ["torch>=1.13"]
