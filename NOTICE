@@ -1,0 +1,22 @@
+Col-Bandit
+Copyright (c) 2026 the Col-Bandit authors.
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product bundles a vendored snapshot of NumKong
+  https://github.com/ashvardanian/NumKong
+  Copyright (c) 2024-2026 Ash Vardanian and contributors.
+  Licensed under the Apache License, Version 2.0.
+
+The NumKong source tree lives under native/numkong/ and is compiled into
+the private extension module `colbandit._kernel`. The upstream LICENSE file
+is preserved at native/numkong/LICENSE.
+
+Col-Bandit adds:
+  * native/numkong/python/colbandit.c   — the `colbandit_flat` entry point
+    implementing progressive elimination on top of NumKong's SIMD MaxSim
+    kernels.
+  * Renamed module-init symbol (PyInit_numkong -> PyInit__kernel) so that
+    Col-Bandit can ship the kernel as a private submodule without colliding
+    with upstream `pip install numkong`.
+
+No other functional changes were made to the vendored NumKong sources.

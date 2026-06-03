@@ -1,0 +1,20 @@
+# Source-distribution manifest: ensure the vendored C kernel + license files
+# are included in the sdist so `pip install colbandit` from sdist builds.
+
+include README.md LICENSE NOTICE
+include pyproject.toml setup.py install.sh
+
+# Vendored NumKong C source tree — compiled into colbandit/_kernel by setup.py.
+recursive-include native/numkong/python   *.c *.h *.pyi py.typed README.md
+recursive-include native/numkong/c        *.c *.h
+recursive-include native/numkong/include  *.h *.modulemap README.md
+recursive-include native/numkong/probes   *.c *.h
+include native/numkong/LICENSE native/numkong/README.md native/numkong/VERSION
+
+# Exclude build artefacts.
+global-exclude __pycache__ *.pyc *.pyo *.so *.dylib *.dll
+prune native/numkong/target
+prune native/numkong/build
+prune native/numkong/numkong.egg-info
+prune native/numkong/rust
+prune native/numkong/annotations

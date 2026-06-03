@@ -13,15 +13,20 @@ Silicon (NEON) via the vendored `numkong` kernel.
 ## Install
 
 ```bash
-git clone <this repo> colbandit && cd colbandit
-./install.sh
+pip install colbandit
 ```
 
-That's it. `install.sh` builds the vendored numkong kernel (Rust + C, ISA-probed) and
-installs the `colbandit` Python package — no `PYTHONPATH`, no library paths.
+That's it. Precompiled wheels are shipped for Linux x86\_64, macOS arm64,
+macOS x86\_64, and Windows x86\_64 (Python 3.9–3.12). The native CB-NK kernel
+is bundled inside the package — no separate dependency, no `PYTHONPATH`.
 
-**Requirements:** a C toolchain, [Rust / cargo](https://rustup.rs), Python ≥ 3.9.
+**Source builds** (when no wheel is available) need a C toolchain and Python ≥ 3.9.
 macOS users also need `libomp` (`brew install libomp`).
+
+```bash
+git clone https://github.com/roipony/ColBandit colbandit && cd colbandit
+./install.sh    # or: pip install .
+```
 
 ## Quickstart
 
@@ -73,13 +78,22 @@ Both should report **Overlap@5 = 1.00** and a meaningful speedup over brute forc
 ## Repo layout
 
 ```
-colbandit/                Python package
-native/numkong/           vendored CB-NK kernel (Rust + C, ISA-probed)
+colbandit/                Python package (ColBandit + _kernel C extension)
+native/numkong/           vendored CB-NK kernel sources (C, ISA-probed)
 examples/quickstart.py    minimal example
 tests/test_smoke.py       smoke tests
-install.sh                one-shot installer
+setup.py + pyproject.toml standalone build (no separate numkong dep)
+install.sh                one-shot source installer
 ```
+
+## Acknowledgements
+
+Col-Bandit bundles a vendored snapshot of [NumKong](https://github.com/ashvardanian/NumKong)
+by Ash Vardanian (Apache-2.0). The progressive-elimination kernel in
+[native/numkong/python/colbandit.c](native/numkong/python/colbandit.c) is built
+on top of NumKong's SIMD MaxSim primitives. See [NOTICE](NOTICE) for the full
+attribution.
 
 ## License
 
-Apache-2.0 (matches the bundled `numkong` kernel).
+Apache-2.0 (matches the bundled CB-NK kernel).

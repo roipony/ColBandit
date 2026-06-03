@@ -14,22 +14,22 @@ That's the only place the token should live.
 ```bash
 # 1) bump version
 sed -i 's/^__version__ = .*/__version__ = "0.1.0"/' colbandit/_version.py
-# match the version on numkong (native/numkong/pyproject.toml) if you ship a numkong release too
+# also bump pyproject.toml's [project] version = "..."
 
 # 2) tag + push
 git tag v0.1.0
 git push origin v0.1.0
 ```
 The `.github/workflows/build-wheels.yml` workflow then:
-1. Builds **numkong** wheels for **Linux x86_64, macOS arm64, macOS x86_64, Windows** (Python 3.9–3.12) using `cibuildwheel`.
-2. Builds the **colbandit** pure-Python wheel + sdist.
-3. Uploads **all** artifacts to PyPI (`pypa/gh-action-pypi-publish`).
+1. Builds **colbandit** binary wheels for **Linux x86_64, macOS arm64, macOS x86_64, Windows** (Python 3.9–3.12) using `cibuildwheel`. The C kernel under `native/numkong/` is compiled into `colbandit/_kernel.*.so` inside each wheel — no separate numkong package is shipped.
+2. Builds the **colbandit** sdist.
+3. Uploads everything to PyPI (`pypa/gh-action-pypi-publish`).
 
 End-users then get one-command install on any of those platforms:
 ```bash
 pip install colbandit
 ```
-Pip auto-selects the correct precompiled numkong wheel — no Rust toolchain on the user's machine.
+Pip auto-selects the correct precompiled wheel — no C/Rust toolchain on the user's machine.
 
 ## Dry runs (recommended before going live)
 Uncomment the `repository-url: https://test.pypi.org/legacy/` line in the publish step and use a TestPyPI token. Then:
@@ -38,5 +38,6 @@ pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://
 ```
 
 ## Notes
-- **Name collisions:** if `colbandit` or `numkong` is taken on PyPI, add a vendor prefix (e.g., `<vendor>-colbandit`) — change `name = "…"` in each `pyproject.toml` (and the `dependencies = ["…"]` line in colbandit/pyproject.toml).
+- **Name collisions:** if `colbandit` is taken on PyPI, add a vendor prefix (e.g., `<vendor>-colbandit`) — change `name = "..."` in `pyproject.toml`.
 - **Apple Silicon vs Intel Mac:** `macos-14` runner produces `*_arm64.whl`; `macos-13` produces `*_x86_64.whl`. End users on either Mac get the right wheel automatically.
+- **No separate numkong wheel.** The C kernel (vendored upstream NumKong + colbandit_flat) is compiled into `colbandit/_kernel.*.so` as part of the colbandit wheel itself. End users never see `numkong` as a dependency.

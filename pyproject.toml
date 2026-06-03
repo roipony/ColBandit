@@ -11,14 +11,28 @@ license = { text = "Apache-2.0" }
 requires-python = ">=3.9"
 authors = [{ name = "Col-Bandit authors" }]
 keywords = ["colbert", "late-interaction", "retrieval", "maxsim", "reranking", "multi-vector"]
-dependencies = ["numpy>=1.21", "numkong>=7.3.0"]
-# After PyPI publish: `pip install colbandit` pulls the right numkong wheel
-# for the user's platform (Linux x86_64, macOS arm64, macOS x86_64, Windows).
-# Source builds from this repo still work via `./install.sh`.
+# Self-contained: the C kernel (vendored from upstream NumKong + colbandit_flat)
+# is built into colbandit._kernel by setup.py. The only runtime dep is NumPy.
+dependencies = ["numpy>=1.21"]
 
 [project.optional-dependencies]
 torch = ["torch>=1.13"]
 dev = ["pytest>=7"]
 
+[project.urls]
+Homepage   = "https://github.com/roipony/ColBandit"
+Repository = "https://github.com/roipony/ColBandit"
+
 [tool.setuptools.packages.find]
 include = ["colbandit*"]
+
+[tool.cibuildwheel]
+build = "cp39-* cp310-* cp311-* cp312-*"
+skip  = "pp* *-musllinux* *-win32 *-manylinux_i686"
+build-verbosity = 1
+# Sanity-check the built wheel on every (OS x arch x Py).
+test-requires = ["numpy"]
+test-command = 'python -c "from colbandit import ColBandit; import numpy as np; cb=ColBandit().index([np.random.randn(8,16).astype(\"float32\") for _ in range(20)]); cb.search(np.random.randn(4,16).astype(\"float32\"), k=3); print(\"ok\")"'
+
+[tool.cibuildwheel.macos]
+before-build = "brew install libomp"

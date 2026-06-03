@@ -1200,10 +1200,13 @@ static char const doc_module[] =                                                
     "    >>> numkong.euclidean(a, b, dtype='bfloat16', out=c)\n";
 
 static PyModuleDef nk_module = {
-    PyModuleDef_HEAD_INIT, .m_name = "NumKong", .m_doc = doc_module, .m_size = -1, .m_methods = nk_methods,
+    PyModuleDef_HEAD_INIT, .m_name = "colbandit._kernel", .m_doc = doc_module, .m_size = -1, .m_methods = nk_methods,
 };
 
-PyMODINIT_FUNC PyInit_numkong(void) {
+/* Renamed from PyInit_numkong: shipped as the private colbandit._kernel
+ * extension (vendored from NumKong, Apache-2.0). The init symbol must match
+ * the last segment of the module name. */
+PyMODINIT_FUNC PyInit__kernel(void) {
     PyObject *m;
 
     if (PyType_Ready(&TensorType) < 0) return NULL;

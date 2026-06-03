@@ -9,11 +9,11 @@ on:
 
 jobs:
   # ───────────────────────────────────────────────────────────────
-  # 1) Build numkong (Rust + C extension) wheels per (OS × arch × Py)
-  #    cibuildwheel reads native/numkong/pyproject.toml's [tool.cibuildwheel]
+  # Build colbandit wheels (C kernel bundled as colbandit._kernel).
+  # cibuildwheel reads the [tool.cibuildwheel] section in pyproject.toml.
   # ───────────────────────────────────────────────────────────────
-  numkong-wheels:
-    name: numkong / ${{ matrix.os }}
+  wheels:
+    name: wheels / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -24,54 +24,48 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: '3.11' }
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
       - uses: pypa/cibuildwheel@v2.21
         with:
-          package-dir: native/numkong
-          output-dir:  wheelhouse
-        env:
-          CIBW_BUILD:  "cp39-* cp310-* cp311-* cp312-*"
-          CIBW_SKIP:   "pp* *-musllinux* *-win32 *-manylinux_i686"
-          CIBW_BEFORE_BUILD_MACOS: "brew install libomp"
+          output-dir: wheelhouse
       - uses: actions/upload-artifact@v4
         with:
-          name: numkong-wheels-${{ matrix.os }}
+          name: wheels-${{ matrix.os }}
           path: wheelhouse/*.whl
 
   # ───────────────────────────────────────────────────────────────
-  # 2) Build colbandit (pure-Python wheel + sdist)
+  # Build the sdist on Linux only.
   # ───────────────────────────────────────────────────────────────
-  colbandit-dist:
-    name: colbandit (pure python)
+  sdist:
+    name: sdist
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: '3.11' }
       - run: pip install build
-      - run: python -m build --wheel --sdist .
+      - run: python -m build --sdist .
       - uses: actions/upload-artifact@v4
         with:
-          name: colbandit-dist
-          path: dist/*
+          name: sdist
+          path: dist/*.tar.gz
 
   # ───────────────────────────────────────────────────────────────
-  # 3) On v* tag: publish everything to PyPI (uses PYPI_API_TOKEN secret)
+  # On v* tag: publish wheels + sdist to PyPI (uses PYPI_API_TOKEN secret).
   # ───────────────────────────────────────────────────────────────
   publish:
     name: publish to PyPI
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [numkong-wheels, colbandit-dist]
+    needs: [wheels, sdist]
     runs-on: ubuntu-latest
     environment:
       name: pypi
       url: https://pypi.org/p/colbandit
     permissions:
-      id-token: write   # for trusted publishing if you switch to that later
+      id-token: write
     steps:
       - uses: actions/download-artifact@v4
         with: { path: all-artifacts }
-      - name: Stage wheels + sdists
+      - name: Stage wheels + sdist
         run: |
           mkdir -p dist
           find all-artifacts -name '*.whl'    -exec cp -v {} dist/ \;

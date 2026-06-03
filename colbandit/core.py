@@ -1,14 +1,15 @@
 """Col-Bandit: query-time top-K identification for late-interaction (ColBERT-style) retrieval.
 
-A thin, dependency-light wrapper over the ``numkong`` CB-NK kernel. It operates on
-*precomputed* multi-vector token embeddings (it is a scoring/reranking layer, not an
-encoder) and exposes two methods:
+A thin, dependency-light wrapper over the ``colbandit._kernel`` CB-NK extension
+(vendored from upstream NumKong, Apache-2.0). It operates on *precomputed*
+multi-vector token embeddings (it is a scoring/reranking layer, not an encoder)
+and exposes two methods:
 
     cb = ColBandit(alpha_ef=0.2, M=5, delta=0.01)
     cb.index(doc_embeddings)                 # list of [L_i, d] float32 (one array per document)
     ids, scores = cb.search(query_emb, k=5)  # query [T, d] float32 -> top-k document ids
 
-Runs on x86 (AVX2) and Apple Silicon (NEON) via the numkong kernel.
+Runs on x86 (AVX2) and Apple Silicon (NEON) via the bundled C kernel.
 """
 
 from __future__ import annotations
@@ -16,11 +17,12 @@ from __future__ import annotations
 import numpy as np
 
 try:
-    import numkong as _nk
+    from colbandit import _kernel as _nk
 except ImportError as e:  # pragma: no cover
     raise ImportError(
-        "colbandit requires the 'numkong' kernel. Build/install it (vendored under "
-        "native/numkong), or set PYTHONPATH to a prebuilt numkong*.so."
+        "colbandit's native kernel (colbandit._kernel) is missing. "
+        "Reinstall via 'pip install colbandit' (precompiled wheels) or "
+        "'pip install .' from a source checkout."
     ) from e
 
 __all__ = ["ColBandit"]
