@@ -60,6 +60,26 @@ aggressively (faster, lower fidelity); `alpha_ef=1` is the conservative corner. 
 rescore margin (keep `K+M` survivors, rescore exactly). `n_threads` parallelises *across
 queries* (throughput, not single-query latency).
 
+### Low-level kernel (advanced)
+
+The high-level `ColBandit` wrapper is built on `colbandit._kernel`, also re-exported
+on the top-level `colbandit` namespace as `colbandit_flat`, `topm_flat`, `full_maxsim`,
+`maxsim_pack`, `extract_flat_from_packed`, and `total_tokens`. Three knobs on
+`colbandit_flat` are worth knowing:
+
+  - **`round_size` (default 4)**: tokens revealed per bandit round, `1..16`. Smaller
+    means more aggressive elimination — lower coverage floor, but a lower max-coverage
+    ceiling too. `B=2` unlocks ~6% min-coverage at 500K; `B=4` is the default sweet
+    spot; `B=8+` works better for multimodal corpora.
+  - **`docs_packed` (optional)**: pass the same packed-doc list `full_maxsim` takes
+    and the `K+M` margin rescore goes through the bit-identical packed kernel
+    (Fix-A). Without it the rescore uses the i8 flat tiled kernel, which diverges
+    from `full_maxsim` by float-add-order noise; with it, `alpha_ef=1` cleanly
+    reaches 99.5–100% overlap (true PAC corner).
+  - **Per-round telemetry**: the returned `stats` dict includes
+    `round_kernel_ms`, `round_elim_ms`, `round_n_survivors`, and `round_tokens`
+    arrays for diagnostics.
+
 ## Sanity check
 
 After `./install.sh`:

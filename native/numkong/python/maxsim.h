@@ -1,6 +1,11 @@
 /**
  *  @brief MaxSim late-interaction declarations for NumKong Python bindings.
  *  @file python/maxsim.h
+ *  @author Ash Vardanian
+ *  @date March 9, 2026
+ *
+ *  Declares the MaxSimPackedMatrix type and API functions for MaxSim
+ *  (ColBERT late-interaction scoring) used by the Python module.
  */
 #ifndef NK_PYTHON_MAXSIM_H
 #define NK_PYTHON_MAXSIM_H
@@ -25,20 +30,11 @@ PyObject *api_maxsim_pack(PyObject *self, PyObject *const *args, Py_ssize_t narg
 PyObject *api_maxsim_packed(PyObject *self, PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames);
 PyObject *api_maxsim(PyObject *self, PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames);
 PyObject *api_colbandit_maxsim(PyObject *self, PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames);
-PyObject *api_colbandit_maxsim_fp32(PyObject *self, PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames);
-PyObject *api_maxsim_pack_int8(PyObject *self, PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames);
-PyObject *api_colbandit_maxsim_prequantized(PyObject *self, PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames);
-PyObject *api_colbandit_maxsim_optimized(PyObject *self, PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames);
-PyObject *api_colbandit_maxsim_unified(PyObject *self, PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames);
-PyObject *api_colbandit_maxsim_pure_fp32(PyObject *self, PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames);
-PyObject *api_colbandit_maxsim_f16(PyObject *self, PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames);
 PyObject *api_topm_maxsim(PyObject *self, PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames);
+PyObject *api_topm_flat(PyObject *self, PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames);
 PyObject *api_maxsim_pack_set_indices(PyObject *self, PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames);
 PyObject *api_maxsim_pack_set_4bit(PyObject *self, PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames);
 PyObject *api_colbandit_flat(PyObject *self, PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames);
-PyObject *api_colbandit_full_inplace(PyObject *self, PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames);
-PyObject *api_topm_flat(PyObject *self, PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames);
-extern char const doc_topm_flat[];
 PyObject *api_extract_flat_from_packed(PyObject *self, PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames);
 PyObject *api_total_tokens(PyObject *self, PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames);
 PyObject *api_full_maxsim(PyObject *self, PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames);
@@ -49,18 +45,11 @@ extern char const doc_maxsim_pack[];
 extern char const doc_maxsim_packed[];
 extern char const doc_maxsim[];
 extern char const doc_colbandit_maxsim[];
-extern char const doc_colbandit_maxsim_fp32[];
-extern char const doc_maxsim_pack_int8[];
-extern char const doc_colbandit_maxsim_prequantized[];
-extern char const doc_colbandit_maxsim_optimized[];
-extern char const doc_colbandit_maxsim_unified[];
-extern char const doc_colbandit_maxsim_pure_fp32[];
-extern char const doc_colbandit_maxsim_f16[];
 extern char const doc_topm_maxsim[];
+extern char const doc_topm_flat[];
 extern char const doc_maxsim_pack_set_indices[];
 extern char const doc_maxsim_pack_set_4bit[];
 extern char const doc_colbandit_flat[];
-extern char const doc_colbandit_full_inplace[];
 extern char const doc_extract_flat_from_packed[];
 extern char const doc_total_tokens[];
 extern char const doc_full_maxsim[];
