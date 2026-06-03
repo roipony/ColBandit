@@ -1,0 +1,1819 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Col-Bandit · Progressive Elimination</title>
+    <meta name="description" content="Col-Bandit uses multi-armed bandits to prune ColBERT scoring, achieving up to 6x speedup with provable guarantees and zero training.">
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=DM+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --bg-deep: #070d14;
+            --bg-card: rgba(255,255,255,0.025);
+            --border: rgba(255,255,255,0.06);
+            --green: #34d399;
+            --red: #f87171;
+            --blue: #60a5fa;
+            --purple: #a78bfa;
+            --yellow: #fbbf24;
+            --text-1: #e2e8f0;
+            --text-2: #94a3b8;
+            --text-3: #475569;
+        }
+        
+        [data-theme="light"] {
+            --bg-deep: #d0d0d0;
+            --bg-card: rgba(0,0,0,0.06);
+            --border: rgba(0,0,0,0.16);
+            --green: #059669;
+            --red: #dc2626;
+            --blue: #2563eb;
+            --purple: #7c3aed;
+            --yellow: #d97706;
+            --text-1: #0f172a;
+            --text-2: #334155;
+            --text-3: #475569;
+        }
+        
+        * { margin:0; padding:0; box-sizing:border-box; }
+        html { scroll-behavior: smooth; }
+        body {
+            font-family: 'DM Sans', sans-serif;
+            background: var(--bg-deep);
+            color: var(--text-1);
+            overflow-x: hidden;
+            transition: background 0.3s ease, color 0.3s ease;
+        }
+        .font-serif { font-family: 'Instrument Serif', serif; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+
+        /* Grain */
+        body::after {
+            content: '';
+            position: fixed; inset: 0;
+            background: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.025'/%3E%3C/svg%3E");
+            pointer-events: none; z-index: 9999;
+        }
+        
+        [data-theme="light"] body::after {
+            opacity: 0.4;
+        }
+
+        .glass { background: var(--bg-card); backdrop-filter: blur(12px); border: 1px solid var(--border); }
+        
+        [data-theme="light"] .glass {
+            background: rgba(255,255,255,0.55);
+            box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+        }
+        
+        /* Fix token colors in background section for light theme */
+        [data-theme="light"] #colbert-illustrated-root .text-gray-400 { color: #64748b !important; }
+        [data-theme="light"] #colbert-illustrated-root .text-gray-500 { color: #64748b !important; }
+        [data-theme="light"] #colbert-illustrated-root .text-gray-600 { color: #475569 !important; }
+        [data-theme="light"] #colbert-illustrated-root .bg-gray-800\/50,
+        [data-theme="light"] #colbert-illustrated-root .bg-gray-800\/60 { background: rgba(0,0,0,0.08) !important; }
+        [data-theme="light"] #colbert-illustrated-root .text-white { color: var(--text-1) !important; }
+        [data-theme="light"] #colbert-illustrated-root .bg-black\/30 { background: rgba(0,0,0,0.05) !important; }
+        [data-theme="light"] #colbert-illustrated-root .border-white\/5 { border-color: rgba(0,0,0,0.08) !important; }
+        [data-theme="light"] #colbert-illustrated-root .text-gray-300 { color: #334155 !important; }
+        
+        /* Fix simulation section tokens for light theme */
+        [data-theme="light"] #simulation-root .text-gray-400 { color: #64748b !important; }
+        [data-theme="light"] #simulation-root .text-gray-500 { color: #64748b !important; }
+        [data-theme="light"] #simulation-root .text-gray-600 { color: #475569 !important; }
+        
+        /* Fix ALL green text in light mode — use much darker green */
+        [data-theme="light"] .text-green-400 { color: #047857 !important; }
+        [data-theme="light"] .text-green-300 { color: #059669 !important; }
+        [data-theme="light"] #colbert-illustrated-root .text-green-400 { color: #047857 !important; }
+        [data-theme="light"] #simulation-root .text-green-400 { color: #047857 !important; }
+        [data-theme="light"] #simulation-root .text-green-300 { color: #059669 !important; }
+        
+        /* Darker demo/simulation panels in light mode */
+        [data-theme="light"] #simulation-root .glass {
+            background: rgba(0,0,0,0.09) !important;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+        }
+        [data-theme="light"] #demo .glass {
+            background: rgba(0,0,0,0.07) !important;
+        }
+        [data-theme="light"] #colbert-illustrated-root .glass {
+            background: rgba(0,0,0,0.06) !important;
+        }
+        
+        /* Fix query token pills in background section for light theme */
+        [data-theme="light"] .query-token-pill {
+            background: rgba(5,150,105,0.15) !important;
+            border: 1.5px solid rgba(5,150,105,0.5) !important;
+            color: #0f172a !important;
+        }
+        
+        [data-theme="light"] .hero-bg {
+            background:
+                radial-gradient(ellipse 80% 50% at 50% -10%, rgba(5,150,105,0.08) 0%, transparent 60%),
+                radial-gradient(ellipse 50% 40% at 85% 50%, rgba(37,99,235,0.05) 0%, transparent 50%);
+        }
+        
+        .gradient-text { background: linear-gradient(135deg, var(--green), var(--blue)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .section-line { height: 1px; background: linear-gradient(90deg, transparent 5%, var(--border) 50%, transparent 95%); }
+        
+        [data-theme="light"] nav {
+            background: rgba(208,208,208,0.95) !important;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        }
+
+        .hero-bg {
+            background:
+                radial-gradient(ellipse 80% 50% at 50% -10%, rgba(52,211,153,0.10) 0%, transparent 60%),
+                radial-gradient(ellipse 50% 40% at 85% 50%, rgba(96,165,250,0.06) 0%, transparent 50%),
+                radial-gradient(ellipse 60% 60% at 20% 80%, rgba(52,211,153,0.04) 0%, transparent 50%);
+        }
+
+        /* Scroll reveal */
+        .reveal { opacity:0; transform:translateY(30px); transition: opacity 0.7s ease, transform 0.7s ease; }
+        .reveal.vis { opacity:1; transform:translateY(0); }
+        .fade-up { opacity:0; transform:translateY(24px); animation: fadeUp 0.7s ease forwards; }
+        @keyframes fadeUp { to { opacity:1; transform:translateY(0); } }
+        .d1{animation-delay:.1s} .d2{animation-delay:.2s} .d3{animation-delay:.3s} .d4{animation-delay:.4s} .d5{animation-delay:.5s}
+
+        /* Table */
+        .rtable th { font-family:'JetBrains Mono',monospace; font-size:0.65rem; letter-spacing:0.1em; text-transform:uppercase; color:var(--text-3); padding:0.75rem 1rem; text-align:center; border-bottom:1px solid var(--border); }
+        .rtable td { padding:0.6rem 1rem; border-bottom:1px solid rgba(255,255,255,0.025); font-size:0.88rem; text-align:center; }
+        .rtable tr:hover td { background:rgba(255,255,255,0.015); }
+        
+        [data-theme="light"] .rtable td { border-bottom: 1px solid rgba(0,0,0,0.12); }
+        [data-theme="light"] .rtable tr:hover td { background: rgba(0,0,0,0.04); }
+        
+        /* Fix table vertical borders in light mode (inline styles use white-based colors) */
+        [data-theme="light"] .rtable th[style*="border-right"],
+        [data-theme="light"] .rtable td[style*="border-right"] {
+            border-right-color: rgba(0,0,0,0.15) !important;
+        }
+        [data-theme="light"] .rtable td {
+            border-left: 1px solid rgba(0,0,0,0.06);
+        }
+        [data-theme="light"] .rtable td:first-child {
+            border-left: none;
+        }
+        
+        /* Fix yellow text in light mode (illustration section) */
+        [data-theme="light"] .text-yellow-400 { color: #b45309 !important; }
+        [data-theme="light"] #colbert-illustrated-root .text-yellow-400 { color: #b45309 !important; }
+        
+        /* Prevent hero glass buttons from disappearing on theme toggle */
+        .hero-btn-glass {
+            background: var(--bg-card) !important;
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--border) !important;
+        }
+
+        /* Bar animation */
+        .bar-grow { transition: width 1.4s cubic-bezier(0.16,1,0.3,1); }
+
+        /* Simulation styles */
+        .sim-container .glass { background: rgba(255,255,255,0.05); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); }
+        .cell-pop { animation: cellPop 0.2s ease-out; }
+        @keyframes cellPop { 0%{transform:scale(0.5)} 70%{transform:scale(1.2)} 100%{transform:scale(1)} }
+        .winner-glow { box-shadow: 0 0 20px rgba(34,197,94,0.5); }
+
+        nav a { transition: color 0.2s; }
+        nav a:hover { color: var(--green); }
+
+        .stat-hover { transition: transform 0.3s, box-shadow 0.3s; }
+        .stat-hover:hover { transform: translateY(-3px); box-shadow: 0 8px 40px -8px rgba(52,211,153,0.12); }
+    </style>
+</head>
+<body>
+
+<!-- Nav -->
+<nav class="fixed top-0 left-0 right-0 z-50 backdrop-blur-md border-b" style="border-color: var(--border); background: var(--bg-deep); opacity: 0.95;">
+    <div class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+        <a href="#" class="font-serif text-xl"><span class="gradient-text">Col-Bandit</span></a>
+        <div class="flex items-center gap-8 text-sm text-[var(--text-2)]">
+            <a href="#colbert-101">Background & Motivations</a>
+            <a href="#method">Method</a>
+            <a href="#results">Results</a>
+            <a href="#demo">Demo</a>
+            <a href="#cite">Cite</a>
+            <button id="theme-toggle" class="p-2 rounded-lg hover:bg-white/5 transition-all" title="Toggle theme">
+                <svg id="theme-icon-dark" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+                </svg>
+                <svg id="theme-icon-light" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none">
+                    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+                </svg>
+            </button>
+        </div>
+    </div>
+</nav>
+
+<!-- ═══════════════════════════ HERO ═══════════════════════════ -->
+<section class="hero-bg min-h-screen flex items-center justify-center pt-20 pb-28 px-6">
+    <div class="max-w-4xl mx-auto text-center">
+        <div class="fade-up"></div>
+        <h1 class="font-serif text-5xl md:text-7xl leading-[1.05] mb-5 fade-up d1">
+            <span class="gradient-text">Col-Bandit</span>
+        </h1>
+        <p class="font-serif text-xl md:text-2xl text-[var(--text-2)] mb-6 fade-up d2" style="font-style:italic;">
+            Adaptive Pruning for Late-Interaction Retrieval<br>via Multi-Armed Bandit Theory
+        </p>
+        <p class="text-sm text-[var(--text-2)] mb-10 fade-up d2" style="opacity: 0.8;">
+            <a href="https://scholar.google.com/citations?hl=iw&user=LWZ9ncsAAAAJ" target="_blank" style="text-decoration:underline; text-underline-offset:3px;">Roi Pony</a>, <a href="https://scholar.google.com/citations?user=JTKcLZkAAAAJ&hl=iw&oi=ao" target="_blank" style="text-decoration:underline; text-underline-offset:3px;">Adi Raz</a>, <a href="https://scholar.google.com/citations?user=IpR9NiIAAAAJ&hl=en&oi=ao" target="_blank" style="text-decoration:underline; text-underline-offset:3px;">Oshri Naparstek</a>, <a href="https://www.linkedin.com/in/idan-friedman-489402140/" target="_blank" style="text-decoration:underline; text-underline-offset:3px;">Idan Friedman</a>, <a href="https://scholar.google.com/citations?user=h323Bu4AAAAJ&hl=en&oi=ao" target="_blank" style="text-decoration:underline; text-underline-offset:3px;">Udi Barzelay</a><br>
+            <span class="font-serif text-[var(--text-3)]" style="font-size: 1.05rem; font-style: italic;">IBM Research Israel</span>
+        </p>
+        <p class="text-base md:text-lg text-[var(--text-2)] max-w-2xl mx-auto mb-12 leading-relaxed fade-up d3">
+            Multi-vector late-interaction retrievers such as ColBERT achieve state-of-the-art retrieval quality, but their <span style="color:var(--red)">query-time cost is dominated by exhaustively computing token-level interactions</span> (MaxSim) for every candidate document. We introduce Col-Bandit, a <span class="gradient-text font-semibold">query-time</span> pruning algorithm that casts reranking as a finite-population Top-K identification problem. Col-Bandit maintains uncertainty-aware bounds over partially observed document scores and adaptively reveals only the entries needed to determine the top results. It operates as a <span class="gradient-text font-semibold">zero-shot, drop-in layer</span> requiring <span class="gradient-text font-semibold">no index modifications or retraining</span>.
+        </p>
+
+        <div class="flex justify-center gap-4 fade-up d4">
+            <a href="https://arxiv.org/abs/2602.02827" target="_blank" class="px-6 py-2.5 hero-btn-glass rounded-xl text-sm text-[var(--text-2)] hover:text-white transition-all flex items-center gap-2">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                Paper
+            </a>
+            <span class="px-6 py-2.5 hero-btn-glass rounded-xl text-sm flex items-center gap-2 cursor-not-allowed" style="opacity:0.4; color:var(--text-3);">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.44 9.8 8.2 11.39.6.11.82-.26.82-.58v-2.03c-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.09-.75.08-.73.08-.73 1.21.08 1.85 1.24 1.85 1.24 1.07 1.84 2.81 1.31 3.5 1 .11-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.12-.3-.54-1.52.12-3.18 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 6.02 0c2.28-1.55 3.29-1.23 3.29-1.23.66 1.66.24 2.88.12 3.18.77.84 1.24 1.91 1.24 3.22 0 4.61-2.81 5.63-5.48 5.92.43.37.81 1.1.81 2.22v3.29c0 .32.22.7.82.58C20.57 21.8 24 17.3 24 12c0-6.63-5.37-12-12-12z"/></svg>
+                Code <span style="font-size:0.65rem; margin-left:4px; opacity:0.8;">— coming soon</span>
+            </span>
+        </div>
+        <div class="flex justify-center gap-4 mt-5 fade-up d4">
+            <a href="#demo" class="px-7 py-3 rounded-xl font-medium text-sm bg-[var(--green)]/10 border border-[var(--green)]/30 text-[var(--green)] hover:bg-[var(--green)]/20 transition-all">▶ Interactive Demo</a>
+            <a href="#results" class="px-7 py-3 rounded-xl font-medium text-sm glass text-[var(--text-2)] hover:text-white transition-all">View Results →</a>
+        </div>
+    </div>
+</section>
+
+<div class="section-line"></div>
+
+<!-- ═══════════════════════════ COLBERT ILLUSTRATED ═══════════════════════════ -->
+<section id="colbert-101" class="py-28 px-6">
+    <div class="max-w-7xl mx-auto">
+        <div class="text-center mb-16 reveal">
+            <span class="mono text-sm md:text-base tracking-[0.2em] uppercase text-[var(--yellow)]">Background and Motivation</span>
+            <h2 class="font-serif text-4xl md:text-5xl mt-3">How ColBERT Scores Documents</h2>
+            <p class="text-[var(--text-2)] mt-5 max-w-xl mx-auto leading-relaxed">
+                Walk through the late-interaction scoring step by step.
+                Each cell in the score matrix is one MaxSim operation — and Col-Bandit's target for pruning.
+            </p>
+        </div>
+        <div id="colbert-illustrated-root" class="reveal"></div>
+    </div>
+</section>
+
+<div class="section-line"></div>
+
+<!-- ═══════════════════════════ METHOD ═══════════════════════════ -->
+<section id="method" class="py-28 px-6">
+    <div class="max-w-5xl mx-auto">
+        <div class="text-center mb-20 reveal">
+            <span class="mono text-sm md:text-base tracking-[0.2em] uppercase text-[var(--green)]">How It Works</span>
+            <h2 class="font-serif text-4xl md:text-5xl mt-3">Col-Bandit Algorithm</h2>
+            <p class="text-[var(--text-2)] mt-5 max-w-xl mx-auto leading-relaxed">
+                Col-Bandit reframes late-interaction reranking as a top-K identification problem,
+                using confidence bounds to adaptively prune the score matrix at query time.
+            </p>
+        </div>
+
+        <!-- ColBERT vs Col-Bandit -->
+        <div class="grid md:grid-cols-2 gap-8 mb-24">
+            <div class="glass rounded-2xl p-8 reveal" style="box-shadow:0 0 50px -12px rgba(248,113,113,0.08)">
+                <div class="flex items-center gap-3 mb-5">
+                    <div class="w-2.5 h-2.5 rounded-full bg-[var(--red)]"></div>
+                    <h3 class="text-lg font-semibold">Standard ColBERT</h3>
+                </div>
+                <p class="text-sm text-[var(--text-2)] leading-relaxed mb-6">
+                    Computes <strong style="color:var(--text-1)">all N × T</strong> MaxSim values.
+                    For 1000 documents and 32 query tokens, that's 32,000 lookups — even for documents clearly not in the top-K.
+                </p>
+                <div class="bg-black/30 rounded-xl p-5 text-center">
+                    <div class="mono text-[0.6rem] text-[var(--text-3)] mb-3 tracking-wider">SCORE MATRIX H [N×T]</div>
+                    <div class="inline-grid gap-px" style="grid-template-columns:repeat(10,1fr)">
+                        <div class="w-3.5 h-2.5 rounded-sm bg-red-500/80"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/90"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/70"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/50"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/85"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/75"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/65"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/55"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/70"></div>
+                        <div class="w-3.5 h-2.5 rounded-sm bg-red-500/70"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/80"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/50"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/90"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/75"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/85"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/55"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/65"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/80"></div>
+                        <div class="w-3.5 h-2.5 rounded-sm bg-red-500/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/50"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/70"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/80"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/90"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/55"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/65"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/75"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/45"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/60"></div>
+                        <div class="w-3.5 h-2.5 rounded-sm bg-red-500/50"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/40"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/55"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/45"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/35"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/40"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/50"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/35"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/45"></div>
+                        <div class="w-3.5 h-2.5 rounded-sm bg-red-500/30"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/35"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/25"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/40"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/30"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/35"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/25"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/30"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/20"></div><div class="w-3.5 h-2.5 rounded-sm bg-red-500/35"></div>
+                    </div>
+                    <div class="mono text-[0.6rem] text-[var(--red)] mt-3 tracking-wider">100% of cells computed</div>
+                </div>
+            </div>
+
+            <div class="glass rounded-2xl p-8 reveal d1" style="box-shadow:0 0 50px -12px rgba(52,211,153,0.08)">
+                <div class="flex items-center gap-3 mb-5">
+                    <div class="w-2.5 h-2.5 rounded-full bg-[var(--green)]"></div>
+                    <h3 class="text-lg font-semibold">Col-Bandit</h3>
+                </div>
+                <p class="text-sm text-[var(--text-2)] leading-relaxed mb-6">
+                    Treats each document as a <strong style="color:var(--text-1)">bandit arm</strong>.
+                    Samples tokens adaptively via LUCB — focusing on competitive candidates and
+                    ignoring obvious losers. Stops when top-K is <strong class="text-[var(--green)]">separated</strong>.
+                </p>
+                <div class="bg-black/30 rounded-xl p-5 text-center">
+                    <div class="mono text-[0.6rem] text-[var(--text-3)] mb-3 tracking-wider">SCORE MATRIX H [N×T]</div>
+                    <div class="inline-grid gap-px" style="grid-template-columns:repeat(10,1fr)">
+                        <div class="w-3.5 h-2.5 rounded-sm bg-green-500/80"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/90"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/70"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/50"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/85"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/75"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/65"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/70"></div>
+                        <div class="w-3.5 h-2.5 rounded-sm bg-green-500/70"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/80"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/90"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/85"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/55"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/75"></div>
+                        <div class="w-3.5 h-2.5 rounded-sm bg-green-500/50"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/70"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-green-500/55"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div>
+                        <div class="w-3.5 h-2.5 rounded-sm bg-green-500/30"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div>
+                        <div class="w-3.5 h-2.5 rounded-sm bg-green-500/20"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div><div class="w-3.5 h-2.5 rounded-sm bg-gray-800/60"></div>
+                    </div>
+                    <div class="mono text-[0.6rem] text-[var(--green)] mt-3 tracking-wider">~16% of cells → same top-K</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<div class="section-line"></div>
+
+<!-- ═══════════════════════════ RESULTS ═══════════════════════════ -->
+<section id="results" class="py-28 px-6">
+    <div class="max-w-5xl mx-auto">
+        <div class="text-center mb-16 reveal">
+            <span class="mono text-sm md:text-base tracking-[0.2em] uppercase text-[var(--blue)]">Experiments</span>
+            <h2 class="font-serif text-4xl md:text-5xl mt-3">Results</h2>
+            <p class="text-[var(--text-2)] mt-5 max-w-2xl mx-auto leading-relaxed">
+                Evaluated on 5 BEIR text datasets (ColBERTv2, Jina-ColBERT-v2) and 4 REAL-MM-RAG multimodal datasets (Granite Vision Embedding 3.2).
+                <br/><br/>
+                <strong className="text-white">Overlap@K</strong> measures ranking fidelity: the fraction of documents in Col-Bandit's top-K that match full ColBERT's top-K. 
+                An Overlap@5 of 90% means 4.5 out of 5 documents are correctly identified.
+            </p>
+        </div>
+
+        <!-- Table -->
+        <div class="glass rounded-2xl overflow-hidden mb-6 reveal">
+            <div class="px-6 pt-5 pb-3">
+                <h4 class="text-sm font-semibold mb-1">Table 1: Col-Bandit Efficiency Across Models</h4>
+                <p class="text-xs text-[var(--text-2)]">Compute shows the percentage of score matrix cells that Col-Bandit must compute to achieve 90% and 95% Overlap@K. Savings shows the compute reduction vs. full ColBERT (100% compute).</p>
+            </div>
+            <table class="rtable w-full">
+                <thead>
+                    <tr class="bg-white/[0.015]">
+                        <th rowspan="2" style="vertical-align:bottom; color:var(--text-2); text-align:left;">Model</th>
+                        <th colspan="4" style="border-right:1px solid rgba(255,255,255,0.06); color:var(--text-2)">Overlap@1</th>
+                        <th colspan="4" style="color:var(--text-2)">Overlap@5</th>
+                    </tr>
+                    <tr class="bg-white/[0.015]">
+                        <th style="background:rgba(255,255,255,0.02); color:var(--text-2)">90%</th>
+                        <th style="background:rgba(255,255,255,0.04); color:var(--text-2)">95%</th>
+                        <th style="background:rgba(255,255,255,0.02); color:var(--text-2)">90%</th>
+                        <th style="background:rgba(255,255,255,0.04); border-right:1px solid rgba(255,255,255,0.06); color:var(--text-2)">95%</th>
+                        <th style="background:rgba(255,255,255,0.02); color:var(--text-2)">90%</th>
+                        <th style="background:rgba(255,255,255,0.04); color:var(--text-2)">95%</th>
+                        <th style="background:rgba(255,255,255,0.02); color:var(--text-2)">90%</th>
+                        <th style="background:rgba(255,255,255,0.04); color:var(--text-2)">95%</th>
+                    </tr>
+                    <tr class="text-[0.6rem]" style="color:var(--text-1)">
+                        <th></th>
+                        <th colspan="2" style="border-right:1px solid rgba(255,255,255,0.03); color:var(--green)">Compute</th>
+                        <th colspan="2" style="border-right:1px solid rgba(255,255,255,0.06); color:var(--green)">Savings</th>
+                        <th colspan="2" style="border-right:1px solid rgba(255,255,255,0.03); color:var(--blue)">Compute</th>
+                        <th colspan="2" style="color:var(--blue)">Savings</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td class="font-medium" style="color:var(--text-2); text-align:left;">ColBERTv2<br/><span class="text-[0.6rem] text-[var(--text-3)]">(BEIR)</span></td>
+                        <td class="mono text-sm text-[var(--green)]">13%</td>
+                        <td class="mono text-sm text-[var(--green)]" style="background:rgba(255,255,255,0.02)">14%</td>
+                        <td class="mono text-sm text-[var(--green)]">7.7×</td>
+                        <td class="mono text-sm text-[var(--green)]" style="background:rgba(255,255,255,0.02); border-right:1px solid rgba(255,255,255,0.06)">7.1×</td>
+                        <td class="mono text-sm text-[var(--blue)]">28%</td>
+                        <td class="mono text-sm text-[var(--blue)]" style="background:rgba(255,255,255,0.02)">33%</td>
+                        <td class="mono text-sm text-[var(--blue)]">3.6×</td>
+                        <td class="mono text-sm text-[var(--blue)]" style="background:rgba(255,255,255,0.02)">3.1×</td>
+                    </tr>
+                    <tr>
+                        <td class="font-medium" style="color:var(--text-2); text-align:left;">Jina-ColBERT-v2<br/><span class="text-[0.6rem] text-[var(--text-3)]">(BEIR)</span></td>
+                        <td class="mono text-sm text-[var(--green)]">11%</td>
+                        <td class="mono text-sm text-[var(--green)]" style="background:rgba(255,255,255,0.02)">14%</td>
+                        <td class="mono text-sm text-[var(--green)]">9.1×</td>
+                        <td class="mono text-sm text-[var(--green)]" style="background:rgba(255,255,255,0.02); border-right:1px solid rgba(255,255,255,0.06)">7.1×</td>
+                        <td class="mono text-sm text-[var(--blue)]">26%</td>
+                        <td class="mono text-sm text-[var(--blue)]" style="background:rgba(255,255,255,0.02)">34%</td>
+                        <td class="mono text-sm text-[var(--blue)]">3.8×</td>
+                        <td class="mono text-sm text-[var(--blue)]" style="background:rgba(255,255,255,0.02)">3.0×</td>
+                    </tr>
+                    <tr>
+                        <td class="font-medium" style="color:var(--text-2); text-align:left;">Granite Vision<br/><span class="text-[0.6rem] text-[var(--text-3)]">(REAL-MM-RAG)</span></td>
+                        <td class="mono text-sm text-[var(--green)]">16%</td>
+                        <td class="mono text-sm text-[var(--green)]" style="background:rgba(255,255,255,0.02)">18%</td>
+                        <td class="mono text-sm text-[var(--green)]">6.3×</td>
+                        <td class="mono text-sm text-[var(--green)]" style="background:rgba(255,255,255,0.02); border-right:1px solid rgba(255,255,255,0.06)">5.9×</td>
+                        <td class="mono text-sm text-[var(--blue)]">31%</td>
+                        <td class="mono text-sm text-[var(--blue)]" style="background:rgba(255,255,255,0.02)">41%</td>
+                        <td class="mono text-sm text-[var(--blue)]">3.2×</td>
+                        <td class="mono text-sm text-[var(--blue)]" style="background:rgba(255,255,255,0.02)">2.5×</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Key takeaways -->
+        <div class="grid md:grid-cols-2 gap-4 mb-14 reveal">
+            <div class="glass rounded-xl p-5 text-center">
+                <div class="mono text-3xl font-bold text-[var(--green)] mb-2">11-18%</div>
+                <div class="text-xs text-[var(--text-2)]">Compute for Overlap@1</div>
+                <div class="text-[0.65rem] text-[var(--text-2)] mt-2">Range across models: 11-16% (90%), 14-18% (95%)</div>
+            </div>
+            <div class="glass rounded-xl p-5 text-center">
+                <div class="mono text-3xl font-bold text-[var(--blue)] mb-2">26-41%</div>
+                <div class="text-xs text-[var(--text-2)]">Compute for Overlap@5</div>
+                <div class="text-[0.65rem] text-[var(--text-2)] mt-2">Range across models: 26-31% (90%), 33-41% (95%)</div>
+            </div>
+            <div class="glass rounded-xl p-5 text-center">
+                <div class="mono text-3xl font-bold text-[var(--green)] mb-2">5.9×-9.1×</div>
+                <div class="text-xs text-[var(--text-2)]">Savings for Overlap@1</div>
+                <div class="text-[0.65rem] text-[var(--text-2)] mt-2">Range across models: 7.1×-9.1× (90%), 5.9×-7.1× (95%)</div>
+            </div>
+            <div class="glass rounded-xl p-5 text-center">
+                <div class="mono text-3xl font-bold text-[var(--blue)] mb-2">2.5×-3.8×</div>
+                <div class="text-xs text-[var(--text-2)]">Savings for Overlap@5</div>
+                <div class="text-[0.65rem] text-[var(--text-2)] mt-2">Range across models: 3.6×-3.8× (90%), 2.5×-3.1× (95%)</div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<div class="section-line"></div>
+
+<!-- ═══════════════════════════ DEMO ═══════════════════════════ -->
+<section id="demo" class="py-28 px-6">
+    <div class="max-w-6xl mx-auto">
+        <div class="text-center mb-14 reveal">
+            <span class="mono text-sm md:text-base tracking-[0.2em] uppercase text-[var(--purple)]">Algorithm in Action</span>
+            <h2 class="font-serif text-4xl md:text-5xl mt-3">Progressive Elimination</h2>
+            <p class="text-[var(--text-2)] mt-5 max-w-2xl mx-auto">
+                Step through Col-Bandit's multi-round elimination. Each round reveals <strong style="color:var(--text-1)">B=4 query tokens</strong>, refreshes Bernstein-Serfling bounds for every surviving document, and prunes any doc whose UCB falls below the K-th confirmed LCB. Use the buttons (or dots) to advance.
+            </p>
+        </div>
+        <div class="sim-container reveal d1">
+            <div id="elimination-root"></div>
+        </div>
+    </div>
+</section>
+
+<div class="section-line"></div>
+
+<!-- ═══════════════════════════ CITE ═══════════════════════════ -->
+<section id="cite" class="py-28 px-6">
+    <div class="max-w-3xl mx-auto text-center reveal">
+        <span class="mono text-sm md:text-base tracking-[0.2em] uppercase text-[var(--text-3)]">Reference</span>
+        <h2 class="font-serif text-4xl md:text-5xl mt-3 mb-10">Citation</h2>
+        <div class="glass rounded-2xl p-7 text-left">
+            <pre class="mono text-xs text-[var(--text-2)] leading-relaxed overflow-x-auto"><code>@misc{pony2026colbanditzeroshotquerytimepruning,
+  title   = {Col-Bandit: Zero-Shot Query-Time Pruning
+             for Late-Interaction Retrieval},
+  author  = {Roi Pony and Adi Raz and Oshri Naparstek
+             and Idan Friedman and Udi Barzelay},
+  year    = {2026},
+  eprint  = {2602.02827},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.IR},
+  url     = {https://arxiv.org/abs/2602.02827}
+}</code></pre>
+        </div>
+    </div>
+</section>
+
+<!-- Footer -->
+<footer class="py-10 px-6 border-t border-white/5">
+    <div class="max-w-5xl mx-auto text-center text-xs text-[var(--text-3)]">
+        Col-Bandit · Zero-Shot Query-Time Pruning for Late-Interaction Retrieval · 2026
+    </div>
+</footer>
+
+<!-- Scroll reveal -->
+<script>
+    const obs = new IntersectionObserver(es => es.forEach(e => { if(e.isIntersecting) e.target.classList.add('vis'); }), {threshold:0.08});
+    document.querySelectorAll('.reveal').forEach(el => obs.observe(el));
+    // Bars
+    const bobs = new IntersectionObserver(es => es.forEach(e => { if(e.isIntersecting) e.target.querySelectorAll('.bar-grow').forEach(b => setTimeout(()=>b.style.width=b.dataset.w+'%',200)); }), {threshold:0.3});
+    const bc = document.getElementById('bar-chart'); if(bc) bobs.observe(bc);
+</script>
+
+<!-- Theme Toggle -->
+<script>
+    // Check for saved theme preference or default to 'dark'
+    const currentTheme = localStorage.getItem('theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', currentTheme);
+    
+    // Update icon visibility based on current theme
+    function updateThemeIcon(theme) {
+        const darkIcon = document.getElementById('theme-icon-dark');
+        const lightIcon = document.getElementById('theme-icon-light');
+        if (theme === 'light') {
+            darkIcon.style.display = 'none';
+            lightIcon.style.display = 'block';
+        } else {
+            darkIcon.style.display = 'block';
+            lightIcon.style.display = 'none';
+        }
+    }
+    
+    // Initialize icon on page load
+    updateThemeIcon(currentTheme);
+    
+    // Theme toggle handler
+    document.getElementById('theme-toggle').addEventListener('click', function() {
+        let theme = document.documentElement.getAttribute('data-theme');
+        if (theme === 'dark') {
+            document.documentElement.setAttribute('data-theme', 'light');
+            localStorage.setItem('theme', 'light');
+            updateThemeIcon('light');
+        } else {
+            document.documentElement.setAttribute('data-theme', 'dark');
+            localStorage.setItem('theme', 'dark');
+            updateThemeIcon('dark');
+        }
+        // Notify React components to re-render with new theme colors
+        window.dispatchEvent(new Event('themechange'));
+    });
+</script>
+
+<!-- ═══════════════════════════ COLBERT 101 INTERACTIVE ═══════════════════════════ -->
+<script type="text/babel">
+    (() => {
+        const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+        // ── Data ──────────────────────────────────────────
+        const QUERY = "What are the latest advances in AI?";
+        const QT = ["what","are","the","latest","advances","in","AI"];
+        const DOCS = [
+            { short:"Doc A", name:"Nature AI", tokens:["neural","network","research","advances","deep","learning"], color:"#60a5fa" },
+            { short:"Doc B", name:"Auto Mag", tokens:["vehicle","engine","hybrid","electric","motor","tesla"], color:"#a78bfa" },
+            { short:"Doc C", name:"AI Review", tokens:["artificial","intelligence","learning","neural","algorithms","deep"], color:"#f472b6" },
+            { short:"Doc D", name:"Physics", tokens:["quantum","particle","photon","wave","energy","mass"], color:"#fb923c" },
+        ];
+        const N = DOCS.length, T = QT.length;
+
+        // Pre-computed MaxSim scores [doc][queryToken] - Correct pruning example
+        // Doc A (winner #2): sum = 6.10. Reveal 6/7 cells (86%) → lower bound = 5.77
+        // Doc C (winner #1): sum = 6.50. Reveal 6/7 cells (86%) → lower bound = 5.85
+        // Doc B & D: Reveal 2/7 cells (29%). Upper bound with max(1.0) for rest < A's lower bound
+        const MAXSIM = [
+            [.99,.98,.97,.96,.94,.93,.33],  // Doc A: 6.10 total. First 6 = 5.77 (lower bound)
+            [.40,.35,.35,.35,.35,.35,.35],   // Doc B: 2.50 total. First 2 = 0.75. Upper bound = 0.75 + 5×1.0 = 5.75 < 5.77 ✓
+            [1.0,.99,.98,.97,.96,.95,.65],   // Doc C: 6.50 total. First 6 = 5.85 (lower bound)
+            [.35,.30,.30,.30,.30,.30,.25],   // Doc D: 2.10 total. First 2 = 0.65. Upper bound = 0.65 + 5×1.0 = 5.65 < 5.77 ✓
+        ];
+
+        const docTotals = DOCS.map((_,di) => MAXSIM[di].reduce((a,b)=>a+b,0));
+        const ranked = docTotals.map((s,i)=>({i,s})).sort((a,b)=>b.s-a.s);
+        const topK = 2; // Looking for top 2
+        const topIndices = ranked.slice(0, topK).map(r => r.i);
+
+        // ── Steps ─────────────────────────────────────────
+        const STEPS = [
+            { id:"query",  title:"① Tokenize the Query",  sub:"The query is split into T = "+T+" tokens. Each token is encoded into a "+128+"-dimensional embedding vector." },
+            { id:"docs",   title:"② Candidate Documents",  sub:"We have N = "+N+" candidate documents from the retrieval stage. Each document's tokens are pre-encoded into "+128+"-dimensional embeddings." },
+            { id:"grid",   title:"③ The Score Matrix (H)",      sub:"The N×T matrix H stores MaxSim values. Each cell H[d,q] will hold the highest similarity between query token q and any token in document d." },
+            { id:"arrows", title:"④ Computing MaxSim Values", sub:"For each cell, we compute the maximum cosine similarity. Example: query token 'AI' finds its best match among Doc A's tokens ('neural', 'deep', etc.)." },
+            { id:"sums",   title:"⑤ Row Sums → Document Scores", sub:"Each document's relevance score is the sum of its row. We want the top-"+topK+" documents with highest sums." },
+            { id:"cost",   title:"⑥ The Motivation: Why Col-Bandit?", sub:"Full ColBERT computes all cells. Col-Bandit adaptively reveals only what's needed to certify the top-K with provable guarantees." },
+        ];
+
+        // ── Colors ────────────────────────────────────────
+        const green = '#34d399', red = '#f87171', blue = '#60a5fa';
+        const isLight = () => document.documentElement.getAttribute('data-theme') === 'light';
+        const cellBg = (v) => isLight() ? `rgba(5,150,105,${Math.min(1,v)*0.35})` : `rgba(52,211,153,${Math.min(1,v)*0.55})`;
+        const cellTx = (v) => isLight() ? (v > 0.5 ? '#064e3b' : '#374151') : (v > 0.5 ? '#34d399' : '#6b7280');
+        const prunedCell = 'rgba(120,120,120,0.25)'; // Brighter gray for visibility
+
+        // ── Component ─────────────────────────────────────
+        const ColBERTIllustrated = () => {
+            const [step, setStep] = useState(0);
+            const [hoverCell, setHoverCell] = useState(null); // {d,q}
+            const [revealedCols, setRevealedCols] = useState(0);
+            const [showSums, setShowSums] = useState(false);
+            const [pruned, setPruned] = useState(new Set());
+            const [, setThemeTick] = useState(0);
+
+            // Re-render on theme change so cellBg/cellTx pick up new colors
+            useEffect(() => {
+                const handler = () => setThemeTick(t => t + 1);
+                window.addEventListener('themechange', handler);
+                return () => window.removeEventListener('themechange', handler);
+            }, []);
+
+            const s = STEPS[step];
+            const showMatrix = step >= 2;
+
+            // Animations per step
+            useEffect(() => {
+                setHoverCell(null);
+                setRevealedCols(0);
+                setShowSums(false);
+                setPruned(new Set());
+
+                if (s.id === 'arrows') {
+                    let col = 0;
+                    const iv = setInterval(() => {
+                        col++;
+                        if (col <= T) setRevealedCols(col);
+                        else clearInterval(iv);
+                    }, 250);
+                    return () => clearInterval(iv);
+                }
+                if (s.id === 'sums') {
+                    setRevealedCols(T);
+                    setTimeout(() => setShowSums(true), 400);
+                }
+                if (s.id === 'cost') {
+                    setRevealedCols(T);
+                    setShowSums(true);
+                    // Prune cells that Col-Bandit would skip
+                    setTimeout(() => {
+                        const skip = new Set();
+                        // Doc A (index 0): reveal first 6 (86%), prune last 1
+                        for (let qi = 6; qi < T; qi++) skip.add(`0-${qi}`);
+                        // Doc B (index 1): reveal first 2 (29%), prune rest
+                        for (let qi = 2; qi < T; qi++) skip.add(`1-${qi}`);
+                        // Doc C (index 2): reveal first 6 (86%), prune last 1
+                        for (let qi = 6; qi < T; qi++) skip.add(`2-${qi}`);
+                        // Doc D (index 3): reveal first 2 (29%), prune rest
+                        for (let qi = 2; qi < T; qi++) skip.add(`3-${qi}`);
+                        setPruned(skip);
+                    }, 600);
+                }
+            }, [step]);
+
+            // ── Query token bar ───────────────────────────
+            const QueryBar = ({ highlight, arrowTo }) => {
+                const showScores = showSums;
+                return (
+                <div className="flex flex-col items-center gap-3 mb-2">
+                    {step === 0 && (
+                        <div className="glass rounded-xl px-5 py-3 text-center mb-2" style={{maxWidth:520}}>
+                            <span className="text-gray-400 text-xs">User query: </span>
+                            <span className="text-white" style={{fontFamily:'Instrument Serif,serif',fontStyle:'italic',fontSize:'1.1rem'}}>"{QUERY}"</span>
+                        </div>
+                    )}
+                    <div className="flex items-end gap-1.5" style={{paddingLeft: showMatrix ? '110px' : '0', paddingRight: showScores ? '60px' : '0'}}>
+                        {QT.map((tok, qi) => {
+                            const isHighlight = qi < revealedCols;
+                            return (
+                                <div key={qi} className="flex flex-col items-center gap-1" style={{width:60}}>
+                                    <div className={`query-token-pill rounded-lg text-xs font-bold transition-all duration-300 flex items-center justify-center ${
+                                        isHighlight ? 'scale-105' : ''
+                                    }`} style={{
+                                        width: '100%',
+                                        height: 42,
+                                        background: isHighlight ? 'rgba(52,211,153,0.15)' : 'rgba(52,211,153,0.08)',
+                                        border: isHighlight ? '1.5px solid rgba(52,211,153,0.4)' : '1px solid rgba(52,211,153,0.2)',
+                                        color: '#e2e8f0'
+                                    }}>
+                                        {tok}
+                                    </div>
+                                    <div className="text-[0.5rem] text-gray-600 mono">q<sub>{qi}</sub></div>
+                                    {/* show embedding dimension hint on step 0 */}
+                                    {step === 0 && (
+                                        <div className="text-[0.45rem] text-gray-600">
+                                            ℝ<sup>128</sup>
+                                        </div>
+                                    )}
+                                    {/* Arrow down to matrix on arrows step */}
+                                    {s.id === 'arrows' && isHighlight && (
+                                        <svg width="2" height="16" className="cell-pop">
+                                            <line x1="1" y1="0" x2="1" y2="16" stroke={green} strokeWidth="1.5" strokeDasharray="2 2"/>
+                                        </svg>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            )};
+            
+
+            // ── Matrix Grid ───────────────────────────────
+            const Matrix = () => {
+                const showScores = showSums;
+                
+                // Calculate partial sums based on revealed cells
+                const partialSums = DOCS.map((_, di) => {
+                    let sum = 0;
+                    for (let qi = 0; qi < T; qi++) {
+                        if (!pruned.has(`${di}-${qi}`)) {
+                            sum += MAXSIM[di][qi];
+                        }
+                    }
+                    return sum;
+                });
+                
+                return (
+                    <div className="inline-flex gap-2">
+                        <div className="flex flex-col gap-1">
+                            {/* Column labels (query tokens) - minimal for space */}
+                            <div className="flex gap-1.5 mb-0.5" style={{marginLeft:110}}>
+                                {QT.map((t,qi) => (
+                                    <div key={qi} className="text-center text-[0.5rem] text-gray-600 mono" style={{width:60}}>
+                                        q{qi}
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* Rows */}
+                            {DOCS.map((doc, di) => {
+                                const isTopK = topIndices.includes(di);
+                                const rowSum = docTotals[di];
+                                const rank = ranked.findIndex(r => r.i === di) + 1;
+
+                                return (
+                                    <div key={di} className="flex items-center gap-1.5">
+                                        {/* Row label */}
+                                        <div className="flex items-center gap-2 shrink-0" style={{width:110}}>
+                                            <div className="text-[0.5rem] text-gray-600 mono">d{di}</div>
+                                            <div className="text-xs font-semibold truncate" style={{color: doc.color}}>
+                                                {doc.short}
+                                            </div>
+                                        </div>
+
+                                        {/* Cells */}
+                                        {MAXSIM[di].map((val, qi) => {
+                                            const key = `${di}-${qi}`;
+                                            const isPruned = pruned.has(key);
+                                            const isHover = hoverCell?.d === di && hoverCell?.q === qi;
+
+                                            return (
+                                                <div key={qi}
+                                                    className={`relative rounded ${isPruned ? '' : 'cursor-pointer hover:ring-2 hover:ring-green-400'} transition-all`}
+                                                    style={{
+                                                        width: 60,
+                                                        height: 42,
+                                                        background: isPruned ? prunedCell : cellBg(val),
+                                                        border: isPruned ? '1px solid rgba(255,255,255,0.15)' : '1px solid rgba(52,211,153,0.2)'
+                                                    }}
+                                                    onMouseEnter={() => !isPruned && setHoverCell({d:di,q:qi})}
+                                                    onMouseLeave={() => setHoverCell(null)}
+                                                >
+                                                    <div className="absolute inset-0 flex items-center justify-center">
+                                                        {!isPruned && (
+                                                            <span className="mono text-[0.6rem] font-bold" style={{color: cellTx(val)}}>
+                                                                {val.toFixed(2)}
+                                                            </span>
+                                                        )}
+                                                        {isPruned && (
+                                                            <span className="text-[0.5rem] text-gray-600">—</span>
+                                                        )}
+                                                    </div>
+                                                    {/* Arrow from query token on arrows step */}
+                                                    {s.id === 'arrows' && qi < revealedCols && !isPruned && (
+                                                        <div className="absolute -top-[17px] left-1/2 -translate-x-1/2">
+                                                            <svg width="8" height="8" className="cell-pop">
+                                                                <polygon points="4,0 7,6 1,6" fill={green} opacity="0.7"/>
+                                                            </svg>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+
+                                        {/* Sum display */}
+                                        {showScores && (
+                                            <div className="flex items-center gap-2 ml-2">
+                                                {/* Show partial sum in cost step, full sum otherwise */}
+                                                {s.id === 'cost' ? (
+                                                    <div className={`px-2 py-1 rounded text-xs font-bold mono transition-all duration-500 ${
+                                                        isTopK ? 'bg-yellow-500/20 text-yellow-400 ring-1 ring-yellow-400/40' : 'bg-gray-800/50 text-gray-500'
+                                                    }`}>
+                                                        {partialSums[di].toFixed(2)}
+                                                    </div>
+                                                ) : (
+                                                    <div className={`px-2 py-1 rounded text-xs font-bold mono transition-all duration-500 ${
+                                                        isTopK ? 'bg-green-500/20 text-green-400 ring-1 ring-green-400/40' : 'bg-gray-800/50 text-gray-500'
+                                                    }`}>
+                                                        {rowSum.toFixed(2)}
+                                                    </div>
+                                                )}
+                                                {isTopK && (
+                                                    <div className="text-[0.5rem] text-yellow-400 font-bold">
+                                                        #{rank}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+
+                        {/* Score column label */}
+                        {showScores && (
+                            <div className="flex flex-col justify-center ml-1">
+                                <div className="text-[0.5rem] text-yellow-400 tracking-wider uppercase" style={{writingMode:'vertical-lr'}}>
+                                    Σ = Score
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                );
+            };
+
+            // ── Hover tooltip ─────────────────────────────
+            const Tooltip = () => {
+                if (!hoverCell || !showMatrix) return null;
+                const {d,q} = hoverCell;
+                return (
+                    <div className="glass rounded-xl p-4 mt-4 max-w-lg mx-auto text-center transition-all duration-200">
+                        <span className="text-xs text-gray-400">MaxSim( </span>
+                        <span className="text-green-400 font-bold text-sm">"{QT[q]}"</span>
+                        <span className="text-xs text-gray-400"> , </span>
+                        <span className="font-bold text-sm" style={{color:DOCS[d].color}}>{DOCS[d].short}</span>
+                        <span className="text-xs text-gray-400"> ) = max similarity across all doc tokens = </span>
+                        <span className="mono text-green-400 font-bold text-lg">{MAXSIM[d][q].toFixed(2)}</span>
+                    </div>
+                );
+            };
+
+            // ── Bottom stats for cost step ────────────────
+            const CostCallout = () => {
+                const revealedCount = N*T - pruned.size;
+                const coverage = (revealedCount / (N*T) * 100).toFixed(0);
+                
+                // Calculate partial sums based on revealed cells
+                const partialSums = DOCS.map((_, di) => {
+                    let sum = 0;
+                    for (let qi = 0; qi < T; qi++) {
+                        if (!pruned.has(`${di}-${qi}`)) {
+                            sum += MAXSIM[di][qi];
+                        }
+                    }
+                    return sum;
+                });
+                
+                return (
+                    <div className="mt-6 space-y-4">
+                        <div className="glass rounded-xl p-5 max-w-2xl mx-auto" style={{borderLeft:'3px solid var(--green)'}}>
+                            <div className="flex items-start gap-3">
+                                <span className="text-green-400 text-xl">💡</span>
+                                <div className="flex-1">
+                                    <p className="text-sm text-gray-300 leading-relaxed mb-3">
+                                        <strong className="text-green-400">Col-Bandit's adaptive strategy:</strong>
+                                    </p>
+                                    <ul className="text-sm text-gray-300 leading-relaxed space-y-2 ml-4">
+                                        <li>• <strong className="text-blue-400">Top-K candidates (A, C)</strong>: Reveal 6 of 7 cells (86%) → establish strong <strong>lower bounds</strong></li>
+                                        <li>• <strong className="text-gray-400">Clear losers (B, D)</strong>: Reveal only 2 cells (29%) → calculate <strong>upper bounds</strong></li>
+                                        <li>• <strong className="text-yellow-400">Pruning condition</strong>: 
+                                            <div className="ml-4 mt-1 font-mono text-xs">
+                                                Doc B upper bound = 0.75 + (5 × 1.0) = 5.75<br/>
+                                                Doc A lower bound = 5.77<br/>
+                                                5.75 &lt; 5.77 → <span className="text-green-400">Safe to prune!</span>
+                                            </div>
+                                        </li>
+                                        <li>• Even if Doc B's 5 unrevealed cells were all perfect (1.0), it still can't beat Doc A's proven minimum score</li>
+                                    </ul>
+                                    
+                                    {/* Partial scores display */}
+                                    <div className="mt-5 pt-4 border-t border-white/5">
+                                        <div className="text-xs text-gray-400 mb-3 text-center">
+                                            <strong className="text-yellow-400">Key insight:</strong> We only care about <strong>ranking</strong>, not exact scores
+                                        </div>
+                                        <div className="grid grid-cols-4 gap-2 text-center">
+                                            {DOCS.map((doc, di) => {
+                                                const isTopK = topIndices.includes(di);
+                                                const rank = ranked.findIndex(r => r.i === di) + 1;
+                                                return (
+                                                    <div key={di} className="glass rounded-lg p-2">
+                                                        <div className="text-[0.6rem] font-semibold mb-1" style={{color: doc.color}}>
+                                                            {doc.short}
+                                                        </div>
+                                                        <div className={`mono text-xs font-bold ${isTopK ? 'text-yellow-400' : 'text-gray-500'}`}>
+                                                            {partialSums[di].toFixed(2)}
+                                                        </div>
+                                                        {isTopK && (
+                                                            <div className="text-[0.5rem] text-yellow-400 mt-0.5">
+                                                                #{rank}
+                                                            </div>
+                                                        )}
+                                                        {!isTopK && (
+                                                            <div className="text-[0.45rem] text-gray-600 mt-0.5">
+                                                                can't win
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                        <div className="text-[0.6rem] text-gray-500 mt-2 text-center">
+                                            Partial sums after adaptive reveal → Ranking certified ✓
+                                        </div>
+                                    </div>
+                                    
+                                    {/* Stats */}
+                                    <div className="mt-4 pt-4 border-t border-white/5 text-center">
+                                        <div className="inline-flex items-center gap-3">
+                                            <div>
+                                                <span className="mono text-lg font-bold text-green-400">{revealedCount}/{N*T}</span>
+                                                <span className="text-xs text-gray-500 ml-1">cells revealed</span>
+                                            </div>
+                                            <div className="w-px h-6 bg-white/10"></div>
+                                            <div>
+                                                <span className="mono text-lg font-bold text-green-400">{coverage}%</span>
+                                                <span className="text-xs text-gray-500 ml-1">coverage/compute</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="flex items-center justify-center gap-4 mt-4 pt-3 border-t border-white/5">
+                                        <div className="flex items-center gap-1.5">
+                                            <div className="w-5 h-3 rounded" style={{background:'rgba(52,211,153,0.4)'}}></div>
+                                            <span className="text-[0.6rem] text-gray-400">Revealed (computed)</span>
+                                        </div>
+                                        <div className="flex items-center gap-1.5">
+                                            <div className="w-5 h-3 rounded" style={{background: prunedCell, border:'1px solid rgba(255,255,255,0.1)'}}></div>
+                                            <span className="text-[0.6rem] text-gray-400">Pruned (skipped)</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+
+            const SumExplain = () => (
+                <div className="mt-5 glass rounded-xl p-5 max-w-xl mx-auto text-center">
+                    <div className="text-xs text-gray-400 mb-2">Score formula for each document:</div>
+                    <div className="mono text-sm text-gray-300">
+                        Score(d) = <span className="text-green-400">Σ</span><sub className="text-gray-500">q∈Q</sub> MaxSim(q, d) = <span className="text-green-400">sum of all cells in the row</span>
+                    </div>
+                    <div className="mt-3 text-xs text-gray-500">
+                        Top-{topK}: <span style={{color: DOCS[2].color}} className="font-bold">Doc C</span> ({docTotals[2].toFixed(2)}) and <span style={{color: DOCS[0].color}} className="font-bold">Doc A</span> ({docTotals[0].toFixed(2)})
+                    </div>
+                </div>
+            );
+
+            return (
+                <div>
+                    {/* Step dots */}
+                    <div className="flex justify-center gap-1.5 mb-10">
+                        {STEPS.map((st, i) => (
+                            <button key={i} onClick={() => setStep(i)}
+                                className={`rounded-full transition-all duration-300 ${i === step ? 'w-12 h-3 bg-green-400' : 'w-3 h-3 bg-gray-600 hover:bg-gray-500'}`} />
+                        ))}
+                    </div>
+
+                    {/* Step title */}
+                    <div className="text-center mb-10">
+                        <h3 className="font-serif text-3xl mb-3">{s.title}</h3>
+                        <p className="text-base text-gray-400 max-w-2xl mx-auto leading-relaxed">{s.sub}</p>
+                    </div>
+
+                    {/* Content area */}
+                    <div className="min-h-[400px]" key={step}>
+                        <div className="fade-up">
+                            {/* Step 0: query */}
+                            {s.id === 'query' && (
+                                <div className="flex flex-col items-center gap-4">
+                                    <div className="glass rounded-2xl px-8 py-5 text-center" style={{maxWidth:560}}>
+                                        <span className="text-gray-400 text-sm">User query: </span>
+                                        <span className="text-white text-xl" style={{fontFamily:'Instrument Serif,serif',fontStyle:'italic'}}>"{QUERY}"</span>
+                                    </div>
+                                    <svg width="2" height="36"><line x1="1" y1="0" x2="1" y2="36" stroke="#34d399" strokeWidth="1.5" strokeDasharray="4 3"/></svg>
+                                    <div className="text-xs text-green-400 font-semibold tracking-wider uppercase">Tokenize + Encode</div>
+                                    <svg width="2" height="24"><line x1="1" y1="0" x2="1" y2="24" stroke="#34d399" strokeWidth="1.5" strokeDasharray="4 3"/></svg>
+                                    <div className="flex flex-wrap justify-center gap-2">
+                                        {QT.map((t,i) => (
+                                            <div key={i} className="flex flex-col items-center gap-1.5">
+                                                <div className="query-token-pill px-4 py-2.5 rounded-xl text-sm font-bold"
+                                                    style={{background:'rgba(52,211,153,0.1)', border:'1.5px solid rgba(52,211,153,0.25)', color:'#e2e8f0'}}>
+                                                    {t}
+                                                </div>
+                                                <div className="flex items-center gap-1">
+                                                    <div className="text-[0.5rem] text-gray-600 mono">q<sub>{i}</sub></div>
+                                                    <div className="text-[0.5rem] text-gray-600">∈ ℝ<sup>128</sup></div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <div className="mt-4 glass rounded-xl p-4 max-w-md text-center">
+                                        <span className="text-xs text-gray-400">Each token becomes a 128-dimensional embedding vector that captures its semantic meaning</span>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Step 1: docs */}
+                            {s.id === 'docs' && (
+                                <div className="flex flex-col items-center gap-6">
+                                    <div className="grid grid-cols-2 gap-4 max-w-2xl">
+                                        {DOCS.map((doc,i) => (
+                                            <div key={i} className="glass rounded-xl p-5">
+                                                <div className="flex items-center gap-2 mb-3">
+                                                    <div className="w-2 h-2 rounded-full" style={{background:doc.color}}></div>
+                                                    <span className="font-semibold text-sm" style={{color:doc.color}}>{doc.name}</span>
+                                                </div>
+                                                <div className="flex flex-wrap gap-1 mb-3">
+                                                    {doc.tokens.slice(0,4).map((tok,j) => (
+                                                        <span key={j} className="px-2 py-1 rounded text-xs" style={{background:'rgba(255,255,255,0.05)', color:'#94a3b8'}}>
+                                                            {tok}
+                                                        </span>
+                                                    ))}
+                                                    <span className="text-xs text-gray-600">+ {doc.tokens.length - 4} more</span>
+                                                </div>
+                                                <div className="text-[0.55rem] text-gray-600 pt-2 border-t border-white/5">
+                                                    Each token: ℝ<sup>128</sup> embedding
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <div className="glass rounded-xl p-4 max-w-lg text-center">
+                                        <span className="text-xs text-gray-400">
+                                            These {N} candidate documents come from a first-stage retrieval. Now we need to precisely score each one using late interaction.
+                                        </span>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Steps 2-5: matrix view */}
+                            {showMatrix && (
+                                <div className="flex flex-col items-center">
+                                    <QueryBar />
+                                    <Matrix />
+                                    <Tooltip />
+                                    {s.id === 'sums' && showSums && <SumExplain />}
+                                    {s.id === 'cost' && <CostCallout />}
+                                    {s.id === 'grid' && (
+                                        <div className="mt-5 text-center text-sm text-gray-500">
+                                            Click any cell to see its MaxSim computation
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Nav buttons */}
+                    <div className="flex justify-center gap-4 mt-8">
+                        <button onClick={() => setStep(Math.max(0, step - 1))}
+                            disabled={step === 0}
+                            className="px-5 py-2.5 rounded-xl font-medium text-sm glass disabled:opacity-30 disabled:cursor-not-allowed hover:bg-white/5 transition-all">
+                            ← Previous
+                        </button>
+                        <button onClick={() => setStep(Math.min(STEPS.length - 1, step + 1))}
+                            disabled={step === STEPS.length - 1}
+                            className="px-5 py-2.5 rounded-xl font-medium text-sm bg-green-500/10 border border-green-500/30 text-green-400 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-green-500/20 transition-all">
+                            Next →
+                        </button>
+                    </div>
+                </div>
+            );
+        };
+
+        // Render the component
+        ReactDOM.render(<ColBERTIllustrated />, document.getElementById('colbert-illustrated-root'));
+    })();
+</script>
+<!-- ═══════════════════════════ SIMULATION ═══════════════════════════ -->
+<script type="text/babel">
+(() => {
+  const { useState, useEffect } = React;
+
+  const N = 120;
+  const T = 32;
+  const K = 5;
+  const B = 4;
+
+  const ROUNDS = [
+    { id: 1, columns: [3, 11, 19, 27],  survivorsBefore: 120, survivorsAfter: 36 },
+    { id: 2, columns: [7, 15, 23, 31],  survivorsBefore: 36,  survivorsAfter: 12 },
+    { id: 3, columns: [1, 9, 17, 25],   survivorsBefore: 12,  survivorsAfter: 6  },
+  ];
+  const SAMPLED_COLS_BY_ROUND = ROUNDS.map(r => r.columns);
+  const ALL_SAMPLED_COLS = SAMPLED_COLS_BY_ROUND.flat();
+  const REMAINING_COLS = Array.from({length: T}, (_, i) => i).filter(c => !ALL_SAMPLED_COLS.includes(c));
+
+  const docQuality = (() => {
+    const scores = Array.from({length: N}, (_, i) => {
+      const x = Math.sin(i * 2.3 + 1.7) * 10000;
+      return x - Math.floor(x);
+    });
+    return scores.map((s, i) => ({ i, s })).sort((a, b) => b.s - a.s).map(d => d.i);
+  })();
+
+  const survivorsAfterRound = (roundIdx) => {
+    if (roundIdx < 0) return new Set(docQuality);
+    const m = ROUNDS[roundIdx].survivorsAfter;
+    return new Set(docQuality.slice(0, m));
+  };
+
+  // Hand-designed bounds for the illustration. These are not computed from a
+  // formula — they're curated so the elimination story is visually obvious
+  // (clear winners, clear losers, and in the cascading frame, new eliminations
+  // that weren't eliminated in the previous round).
+  //
+  // Invariants enforced by hand:
+  //   - At nRevealed=4:  K-th LCB = 21.0, 5 winners, 3 surviving, 5 eliminated
+  //   - At nRevealed=8:  K-th LCB = 24.5, 5 winners, 8 eliminated (3 new)
+  //   - Bars narrow visibly from nRevealed=4 to nRevealed=8 (cascading tightening)
+
+  const BOUNDS_BY_NREVEALED = {
+    4: [
+      { id: 12,  estimate: 27.0, lcb: 24.0, ucb: 30.5 },
+      { id: 47,  estimate: 25.5, lcb: 22.8, ucb: 28.2 },
+      { id: 83,  estimate: 24.8, lcb: 22.0, ucb: 27.6 },
+      { id: 104, estimate: 24.0, lcb: 21.3, ucb: 26.9 },
+      { id: 151, estimate: 23.2, lcb: 21.0, ucb: 26.0 }, // K-th (5th) LCB
+      { id: 19,  estimate: 22.5, lcb: 19.5, ucb: 25.8 },
+      { id: 67,  estimate: 21.0, lcb: 18.2, ucb: 24.0 },
+      { id: 99,  estimate: 19.0, lcb: 16.5, ucb: 22.5 },
+      { id: 130, estimate: 17.5, lcb: 15.0, ucb: 20.2 }, // eliminated (20.2 < 21.0)
+      { id: 34,  estimate: 15.8, lcb: 13.5, ucb: 18.5 }, // eliminated
+      { id: 111, estimate: 13.8, lcb: 11.5, ucb: 16.5 }, // eliminated
+      { id: 178, estimate: 12.0, lcb: 10.0, ucb: 14.5 }, // eliminated
+      { id: 56,  estimate: 10.5, lcb:  8.5, ucb: 13.0 }, // eliminated
+    ],
+    8: [
+      { id: 12,  estimate: 27.3, lcb: 25.7, ucb: 28.9 },
+      { id: 47,  estimate: 26.0, lcb: 25.0, ucb: 27.5 },
+      { id: 83,  estimate: 25.4, lcb: 24.8, ucb: 26.5 },
+      { id: 104, estimate: 25.2, lcb: 24.6, ucb: 26.3 },
+      { id: 151, estimate: 25.0, lcb: 24.5, ucb: 26.0 }, // K-th LCB rose to 24.5
+      { id: 19,  estimate: 22.8, lcb: 21.3, ucb: 24.3 }, // NEW elimination (24.3 < 24.5)
+      { id: 67,  estimate: 21.5, lcb: 20.0, ucb: 23.0 }, // NEW elimination
+      { id: 99,  estimate: 19.5, lcb: 18.0, ucb: 21.1 }, // NEW elimination
+      { id: 130, estimate: 17.8, lcb: 16.3, ucb: 19.3 }, // still eliminated
+      { id: 34,  estimate: 16.0, lcb: 14.5, ucb: 17.5 },
+      { id: 111, estimate: 14.0, lcb: 12.5, ucb: 15.5 },
+      { id: 178, estimate: 12.2, lcb: 10.7, ucb: 13.7 },
+      { id: 56,  estimate: 10.7, lcb:  9.2, ucb: 12.2 },
+    ],
+  };
+
+  const computeBoundsForDocs = (nRevealed) => {
+    return BOUNDS_BY_NREVEALED[nRevealed] || BOUNDS_BY_NREVEALED[4];
+  };
+
+  const FRAMES = [
+    {
+      id: 'full',
+      kind: 'matrix',
+      title: '① Full Score Matrix',
+      sub: `We start with N=${N} candidate documents and T=${T} query tokens — a total of ${N*T} MaxSim cells. Naive full scoring computes all of them. Col-Bandit reveals only a tiny fraction.`,
+    },
+    {
+      id: 'round1-sample',
+      kind: 'matrix',
+      title: '② Round 1 — Sample B=4 Columns',
+      sub: `Randomly select ${B} query tokens (columns). For all ${N} surviving documents, compute MaxSim for these ${B} cells only.`,
+    },
+    {
+      id: 'bounds-intro',
+      kind: 'intervals',
+      nRevealed: 4,
+      showThreshold: false,
+      title: '③ Compute UCB / LCB per Document',
+      sub: `From the ${B} revealed cells, estimate each doc's total score: extrapolate the partial sum to all T tokens, then add a Serfling-Bernstein confidence radius to get [LCB, UCB]. With only 4 observations, intervals are wide.`,
+    },
+    {
+      id: 'elim-condition',
+      kind: 'intervals',
+      nRevealed: 4,
+      showThreshold: true,
+      title: '④ The Elimination Condition',
+      sub: `Find the K-th best LCB — the K-th strongest "floor" score. Any doc whose UCB falls below this line cannot possibly reach the top-K: even its best case is worse than K confirmed winners' worst cases.`,
+    },
+    {
+      id: 'round1-elim',
+      kind: 'matrix',
+      title: '⑤ Apply Elimination to the Matrix',
+      sub: `Docs with UCB < LCB_{(K)} are dropped. Survivors: ${ROUNDS[0].survivorsBefore} → ${ROUNDS[0].survivorsAfter}. Their partial sums and bounds carry over to the next round.`,
+    },
+    {
+      id: 'round2-sample',
+      kind: 'matrix',
+      title: '⑥ Round 2 — Shrunken Matrix',
+      sub: `Only ${ROUNDS[0].survivorsAfter} docs survive. Sample ${B} new query tokens. We pay for only ${ROUNDS[0].survivorsAfter}×${B}=${ROUNDS[0].survivorsAfter*B} cells this round — a fraction of round 1's cost.`,
+    },
+    {
+      id: 'bounds-tighten',
+      kind: 'intervals',
+      nRevealed: 8,
+      showThreshold: true,
+      title: '⑦ Bounds Tighten — Cascading Elimination',
+      sub: `With ${B*2}/${T} cells revealed, the Serfling radius shrinks for every surviving doc. The K-th LCB rises; UCBs fall. Docs that narrowly survived round 1 can now be eliminated.`,
+    },
+    {
+      id: 'round2-elim',
+      kind: 'matrix',
+      title: '⑧ Round 2 — More Pruning',
+      sub: `Survivors: ${ROUNDS[1].survivorsBefore} → ${ROUNDS[1].survivorsAfter}.`,
+    },
+    {
+      id: 'round3-sample',
+      kind: 'matrix',
+      title: '⑨ Round 3 — Near Convergence',
+      sub: `Only ${ROUNDS[1].survivorsAfter} docs left. Another ${B} columns sampled. Elimination is converging — bounds are almost tight.`,
+    },
+    {
+      id: 'round3-elim',
+      kind: 'matrix',
+      title: '⑩ Round 3 — Elimination Converges',
+      sub: `Survivors: ${ROUNDS[2].survivorsBefore} → ${ROUNDS[2].survivorsAfter}. Elimination has reached its budget.`,
+    },
+    {
+      id: 'final',
+      kind: 'matrix',
+      title: '⑪ Final Scoring on Survivors',
+      sub: `Only ${ROUNDS[2].survivorsAfter} docs remain. Score the remaining ${REMAINING_COLS.length} query tokens on all of them for exact per-doc totals. This step is cheap because the survivor set is tiny.`,
+    },
+    {
+      id: 'result',
+      kind: 'matrix',
+      title: '⑫ Result — Top-K Identified',
+      sub: `The top-${K} documents are certified. Total cells computed: ${ROUNDS[0].survivorsBefore*B + ROUNDS[0].survivorsAfter*B + ROUNDS[1].survivorsAfter*B + ROUNDS[2].survivorsAfter*REMAINING_COLS.length} of ${N*T} ≈ ${Math.round((ROUNDS[0].survivorsBefore*B + ROUNDS[0].survivorsAfter*B + ROUNDS[1].survivorsAfter*B + ROUNDS[2].survivorsAfter*REMAINING_COLS.length) / (N*T) * 100)}% of the full matrix.`,
+    },
+  ];
+
+  const getMatrixState = (frameId) => {
+    let aliveSet = new Set(docQuality);
+    let revealedCols = [];
+    let sampledNow = [];
+
+    if (frameId === 'full') {}
+    else if (frameId === 'round1-sample') {
+      revealedCols = [...SAMPLED_COLS_BY_ROUND[0]];
+      sampledNow = [...SAMPLED_COLS_BY_ROUND[0]];
+    }
+    else if (frameId === 'round1-elim') {
+      revealedCols = [...SAMPLED_COLS_BY_ROUND[0]];
+      aliveSet = survivorsAfterRound(0);
+    }
+    else if (frameId === 'round2-sample') {
+      revealedCols = [...SAMPLED_COLS_BY_ROUND[0], ...SAMPLED_COLS_BY_ROUND[1]];
+      sampledNow = [...SAMPLED_COLS_BY_ROUND[1]];
+      aliveSet = survivorsAfterRound(0);
+    }
+    else if (frameId === 'round2-elim') {
+      revealedCols = [...SAMPLED_COLS_BY_ROUND[0], ...SAMPLED_COLS_BY_ROUND[1]];
+      aliveSet = survivorsAfterRound(1);
+    }
+    else if (frameId === 'round3-sample') {
+      revealedCols = [...SAMPLED_COLS_BY_ROUND[0], ...SAMPLED_COLS_BY_ROUND[1], ...SAMPLED_COLS_BY_ROUND[2]];
+      sampledNow = [...SAMPLED_COLS_BY_ROUND[2]];
+      aliveSet = survivorsAfterRound(1);
+    }
+    else if (frameId === 'round3-elim') {
+      revealedCols = [...SAMPLED_COLS_BY_ROUND[0], ...SAMPLED_COLS_BY_ROUND[1], ...SAMPLED_COLS_BY_ROUND[2]];
+      aliveSet = survivorsAfterRound(2);
+    }
+    else if (frameId === 'final') {
+      revealedCols = [...SAMPLED_COLS_BY_ROUND[0], ...SAMPLED_COLS_BY_ROUND[1], ...SAMPLED_COLS_BY_ROUND[2], ...REMAINING_COLS];
+      sampledNow = [...REMAINING_COLS];
+      aliveSet = survivorsAfterRound(2);
+    }
+    else if (frameId === 'result') {
+      revealedCols = [...SAMPLED_COLS_BY_ROUND[0], ...SAMPLED_COLS_BY_ROUND[1], ...SAMPLED_COLS_BY_ROUND[2], ...REMAINING_COLS];
+      aliveSet = survivorsAfterRound(2);
+    }
+
+    return { aliveSet, revealedCols: new Set(revealedCols), sampledNow: new Set(sampledNow) };
+  };
+
+  const columnRound = (col) => {
+    for (let r = 0; r < SAMPLED_COLS_BY_ROUND.length; r++) {
+      if (SAMPLED_COLS_BY_ROUND[r].includes(col)) return r;
+    }
+    return 3;
+  };
+
+  const ProgressiveElimination = () => {
+    const [frame, setFrame] = useState(0);
+    const [, setThemeTick] = useState(0);
+    useEffect(() => {
+      const handler = () => setThemeTick(t => t + 1);
+      window.addEventListener('themechange', handler);
+      return () => window.removeEventListener('themechange', handler);
+    }, []);
+
+    const f = FRAMES[frame];
+    const cellW = 14;
+    const cellH = 2;
+    const bigRowCellH = 14;
+    const useBigRows = f.id === 'final' || f.id === 'result';
+
+    const state = f.kind === 'matrix' ? getMatrixState(f.id) : null;
+
+    const revealedCellCount = (() => {
+      if (f.id === 'full') return 0;
+      if (f.id === 'round1-sample' || f.id === 'bounds-intro' || f.id === 'elim-condition' || f.id === 'round1-elim') return ROUNDS[0].survivorsBefore * B;
+      if (f.id === 'round2-sample' || f.id === 'bounds-tighten' || f.id === 'round2-elim') return ROUNDS[0].survivorsBefore * B + ROUNDS[0].survivorsAfter * B;
+      if (f.id === 'round3-sample' || f.id === 'round3-elim') return ROUNDS[0].survivorsBefore * B + ROUNDS[0].survivorsAfter * B + ROUNDS[1].survivorsAfter * B;
+      if (f.id === 'final' || f.id === 'result') return ROUNDS[0].survivorsBefore * B + ROUNDS[0].survivorsAfter * B + ROUNDS[1].survivorsAfter * B + ROUNDS[2].survivorsAfter * REMAINING_COLS.length;
+      return 0;
+    })();
+    const totalCells = N * T;
+    const revealedPct = (revealedCellCount / totalCells * 100).toFixed(1);
+    const speedup = revealedCellCount > 0 ? (totalCells / revealedCellCount).toFixed(1) : '—';
+
+    const aliveCount = (() => {
+      if (f.kind === 'intervals') {
+        if (f.id === 'bounds-intro' || f.id === 'elim-condition') return ROUNDS[0].survivorsBefore;
+        if (f.id === 'bounds-tighten') return ROUNDS[0].survivorsAfter;
+        return N;
+      }
+      return state.aliveSet.size;
+    })();
+
+    const roundColors = ['var(--green)', 'var(--blue)', 'var(--purple)'];
+    const finalColor = 'var(--yellow)';
+
+    const docsToRender = useBigRows
+      ? Array.from(state.aliveSet).slice(0, ROUNDS[2].survivorsAfter)
+      : docQuality;
+
+    const LegendItem = ({color, label, dim, dashed}) => (
+      <div className="flex items-center gap-1.5">
+        {dashed ? (
+          <div style={{width:14, borderTop:`2px dashed ${color}`}}/>
+        ) : (
+          <div style={{
+            width:14, height:8, borderRadius:2,
+            background: dim ? 'rgba(120,120,120,0.25)' : color,
+            border: dim ? '1px solid rgba(255,255,255,0.1)' : 'none'
+          }} />
+        )}
+        <span className="text-[0.6rem]" style={{color:'var(--text-3)'}}>{label}</span>
+      </div>
+    );
+
+    // ══════════════════════════════════════════════════════════
+    // Interval (UCB/LCB bar) view
+    // ══════════════════════════════════════════════════════════
+    const IntervalView = () => {
+      const bounds = computeBoundsForDocs(f.nRevealed);
+      const sorted = [...bounds].sort((a, b) => b.lcb - a.lcb);
+      const kthLcb = sorted[K - 1].lcb;
+
+      const eliminatedIds = new Set();
+      if (f.showThreshold) {
+        sorted.forEach((d, idx) => {
+          if (idx >= K && d.ucb < kthLcb) eliminatedIds.add(d.id);
+        });
+      }
+
+      const axisMax = T;
+      const barAreaW = 520;
+      const barH = 18;
+      const px = (v) => (v / axisMax) * barAreaW;
+
+      return (
+        <div className="glass rounded-2xl p-6 md:p-8">
+          <div className="mono text-[0.6rem] tracking-wider text-center mb-4" style={{color:'var(--text-3)'}}>
+            SCORE INTERVALS — {f.nRevealed} OF {T} CELLS REVEALED · SORTED BY LCB
+          </div>
+
+          {/* Axis labels */}
+          <div className="flex items-center justify-center mb-2">
+            <div style={{width:52}}></div>
+            <div style={{width:barAreaW, position:'relative', height:14}}>
+              {[0, 8, 16, 24, 32].map(v => (
+                <div key={v} style={{
+                  position:'absolute', left: px(v) - 6, top:0,
+                  fontSize:9, color:'var(--text-3)'
+                }} className="mono">{v}</div>
+              ))}
+            </div>
+            <div style={{width:180}}></div>
+          </div>
+
+          {/* Bars container with threshold line overlay */}
+          <div style={{position:'relative'}}>
+            {/* Threshold line */}
+            {f.showThreshold && (
+              <div style={{
+                position:'absolute',
+                left: 52 + px(kthLcb),
+                top: 0,
+                bottom: 10,
+                width: 0,
+                borderLeft: '2px dashed var(--yellow)',
+                zIndex: 10,
+                pointerEvents:'none'
+              }}>
+                <div style={{
+                  position:'absolute',
+                  top: -16, left: -40,
+                  fontSize: 9,
+                  color:'var(--yellow)',
+                  whiteSpace:'nowrap',
+                  background:'var(--bg-deep)',
+                  padding:'1px 4px',
+                  borderRadius:2
+                }} className="mono font-bold">
+                  LCB<sub>(K)</sub> = {kthLcb.toFixed(1)}
+                </div>
+              </div>
+            )}
+
+            {sorted.map((d, rank) => {
+              const isWinnerSide = rank < K;
+              const isEliminated = eliminatedIds.has(d.id);
+              const rowColor = isEliminated ? 'var(--red)' : (isWinnerSide ? 'var(--green)' : 'var(--text-2)');
+              const barColor = isEliminated
+                ? 'rgba(248,113,113,0.25)'
+                : (isWinnerSide ? 'rgba(52,211,153,0.35)' : 'rgba(148,163,184,0.20)');
+              const barBorder = isEliminated
+                ? '1px solid rgba(248,113,113,0.55)'
+                : (isWinnerSide ? '1px solid rgba(52,211,153,0.6)' : '1px solid rgba(148,163,184,0.4)');
+              const tickColor = isEliminated ? 'var(--red)' : (isWinnerSide ? 'var(--green)' : 'var(--text-2)');
+
+              return (
+                <div key={d.id} className="flex items-center mb-[5px]" style={{
+                  opacity: isEliminated ? 0.75 : 1,
+                  transition: 'opacity 0.4s ease'
+                }}>
+                  <div style={{width:52, textAlign:'right', paddingRight:6, fontSize:10, color:rowColor}} className="mono">
+                    d<sub>{d.id}</sub>
+                  </div>
+
+                  <div style={{width:barAreaW, position:'relative', height:barH}}>
+                    <div style={{position:'absolute', left:0, right:0, top:barH/2, height:1, background:'rgba(255,255,255,0.04)'}}></div>
+
+                    <div style={{
+                      position:'absolute',
+                      left: px(d.lcb),
+                      width: Math.max(2, px(d.ucb) - px(d.lcb)),
+                      top: 2, bottom: 2,
+                      background: barColor,
+                      border: barBorder,
+                      borderRadius: 3,
+                      transition: 'left 0.5s ease, width 0.5s ease, background 0.3s ease'
+                    }}/>
+
+                    <div style={{
+                      position:'absolute',
+                      left: px(d.lcb),
+                      top: 0, bottom: 0,
+                      width: 2,
+                      background: tickColor,
+                    }}/>
+                    <div style={{
+                      position:'absolute',
+                      left: px(d.ucb) - 2,
+                      top: 0, bottom: 0,
+                      width: 2,
+                      background: tickColor,
+                    }}/>
+
+                    <div style={{
+                      position:'absolute',
+                      left: px(d.estimate) - 3,
+                      top: barH/2 - 3,
+                      width: 6, height: 6, borderRadius: 3,
+                      background: tickColor,
+                      border: '1px solid rgba(0,0,0,0.3)'
+                    }}/>
+                  </div>
+
+                  <div style={{width:90, paddingLeft:8, fontSize:9}} className="mono">
+                    <span style={{color:'var(--text-3)'}}>[{d.lcb.toFixed(1)}, {d.ucb.toFixed(1)}]</span>
+                  </div>
+
+                  <div style={{width:80, fontSize:9, textAlign:'left'}} className="mono">
+                    {isEliminated ? (
+                      <span style={{color:'var(--red)'}}>✗ eliminated</span>
+                    ) : isWinnerSide ? (
+                      <span style={{color:'var(--green)'}}>winner #{rank+1}</span>
+                    ) : (
+                      <span style={{color:'var(--text-3)'}}>surviving</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="text-center mt-3 text-[0.65rem]" style={{color:'var(--text-3)'}}>
+            Document total score (sum over all T query tokens)
+          </div>
+
+          <div className="flex items-center justify-center gap-5 mt-4 pt-3 flex-wrap" style={{borderTop:'1px solid var(--border)'}}>
+            <LegendItem color="var(--green)" label="Top-K winner" />
+            <LegendItem color="var(--text-2)" label="Surviving loser" />
+            {f.showThreshold && <LegendItem color="var(--red)" label="Eliminated" />}
+            {f.showThreshold && <LegendItem color="var(--yellow)" dashed label="LCB_{(K)} threshold" />}
+          </div>
+        </div>
+      );
+    };
+
+    // ══════════════════════════════════════════════════════════
+    // Matrix view
+    // ══════════════════════════════════════════════════════════
+    const MatrixView = () => {
+      if (useBigRows) {
+        return (
+          <div className="glass rounded-2xl p-6 md:p-8">
+            <div className="mono text-[0.6rem] tracking-wider text-center mb-3" style={{color:'var(--text-3)'}}>
+              SURVIVOR SCORING — {aliveCount} DOCS × {T} COLUMNS
+            </div>
+            <div className="flex justify-center mb-2">
+              <div style={{width:60}}></div>
+              <div className="flex gap-[1px]">
+                {Array.from({length: T}, (_, ci) => (
+                  <div key={ci} style={{width: cellW + 6, height: 8, fontSize: 6, color:'var(--text-3)', textAlign:'center'}} className="mono">
+                    {ci % 4 === 0 ? ci : ''}
+                  </div>
+                ))}
+              </div>
+              <div style={{width:70}}></div>
+            </div>
+            {docsToRender.map((di, rank) => {
+              const isResult = f.id === 'result';
+              return (
+                <div key={di} className="flex items-center justify-center mb-1">
+                  <div style={{width:60, fontSize:10, color: isResult ? finalColor : 'var(--text-2)'}} className="mono">
+                    {isResult ? `#${rank+1}` : ''} d<sub>{di}</sub>
+                  </div>
+                  <div className="flex gap-[1px]">
+                    {Array.from({length: T}, (_, ci) => {
+                      const isRevealed = state.revealedCols.has(ci);
+                      const isJustSampled = state.sampledNow.has(ci);
+                      const round = columnRound(ci);
+                      const color = round < 3 ? roundColors[round] : finalColor;
+                      return (
+                        <div key={ci} className="rounded-sm"
+                          style={{
+                            width: cellW + 6,
+                            height: bigRowCellH,
+                            background: isRevealed
+                              ? (isJustSampled ? color : `color-mix(in srgb, ${color} 55%, transparent)`)
+                              : 'rgba(120,120,120,0.12)',
+                            border: isRevealed
+                              ? `1px solid color-mix(in srgb, ${color} 60%, transparent)`
+                              : '1px solid rgba(255,255,255,0.05)',
+                            transition: 'background 0.4s ease'
+                          }}
+                        />
+                      );
+                    })}
+                  </div>
+                  {isResult ? (
+                    <div style={{width:70, textAlign:'right', fontSize:10}} className="mono ml-2">
+                      <span style={{color:finalColor}}>TOP-{K}</span>
+                    </div>
+                  ) : <div style={{width:70}}></div>}
+                </div>
+              );
+            })}
+            <div className="flex items-center justify-center gap-5 mt-5 pt-3" style={{borderTop:'1px solid var(--border)'}}>
+              <LegendItem color="var(--green)" label="Round 1" />
+              <LegendItem color="var(--blue)" label="Round 2" />
+              <LegendItem color="var(--purple)" label="Round 3" />
+              <LegendItem color="var(--yellow)" label="Final scoring" />
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="glass rounded-2xl p-5 md:p-6" style={{overflow:'hidden'}}>
+          <div className="mono text-[0.6rem] tracking-wider text-center mb-3" style={{color:'var(--text-3)'}}>
+            N×T MATRIX — {aliveCount} OF {N} ALIVE · {T} COLUMNS
+          </div>
+          <div className="flex justify-center mb-2">
+            <div style={{width:40}}></div>
+            <div className="flex gap-[1px]">
+              {Array.from({length: T}, (_, ci) => {
+                const isSampledNow = state.sampledNow.has(ci);
+                const isRevealed = state.revealedCols.has(ci);
+                return (
+                  <div key={ci} style={{
+                    width: cellW,
+                    height: 10,
+                    borderTop: isSampledNow ? `2px solid ${roundColors[columnRound(ci)] || finalColor}` : '2px solid transparent',
+                  }}>
+                    {ci % 4 === 0 && (
+                      <div style={{fontSize:6, color: isRevealed ? 'var(--text-2)' : 'var(--text-3)', textAlign:'center', lineHeight:'10px'}} className="mono">
+                        {ci}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div style={{display:'flex', flexDirection:'column', gap:1, alignItems:'center'}}>
+            {docQuality.map((di, idx) => {
+              const isAlive = state.aliveSet.has(di);
+              return (
+                <div key={di} style={{
+                  display:'flex', alignItems:'center',
+                  opacity: isAlive ? 1 : 0.08,
+                  transition: 'opacity 0.5s ease'
+                }}>
+                  <div style={{width:40, fontSize:6, color:'var(--text-3)', textAlign:'right', paddingRight:4}} className="mono">
+                    {idx % 15 === 0 ? `d${idx}` : ''}
+                  </div>
+                  <div className="flex gap-[1px]">
+                    {Array.from({length: T}, (_, ci) => {
+                      const isRevealed = state.revealedCols.has(ci);
+                      const isJustSampled = state.sampledNow.has(ci);
+                      const round = columnRound(ci);
+                      const color = round < 3 ? roundColors[round] : finalColor;
+                      return (
+                        <div key={ci}
+                          style={{
+                            width: cellW,
+                            height: cellH,
+                            background: isRevealed
+                              ? (isJustSampled ? color : `color-mix(in srgb, ${color} 55%, transparent)`)
+                              : 'rgba(120,120,120,0.10)',
+                            transition: 'background 0.4s ease'
+                          }}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex items-center justify-center gap-5 mt-5 pt-3" style={{borderTop:'1px solid var(--border)'}}>
+            <LegendItem color="var(--green)" label="Round 1" />
+            <LegendItem color="var(--blue)" label="Round 2" />
+            <LegendItem color="var(--purple)" label="Round 3" />
+            <LegendItem dim label="Empty" />
+          </div>
+        </div>
+      );
+    };
+
+    const StatsRow = () => (
+      <div className="grid grid-cols-4 gap-3 mb-5">
+        <div className="glass rounded-xl p-3 text-center" style={{borderLeft:'3px solid var(--green)'}}>
+          <div className="mono text-lg font-bold" style={{color:'var(--green)'}}>{aliveCount}</div>
+          <div className="text-[0.65rem]" style={{color:'var(--text-2)'}}>Docs alive</div>
+        </div>
+        <div className="glass rounded-xl p-3 text-center" style={{borderLeft:'3px solid var(--blue)'}}>
+          <div className="mono text-lg font-bold" style={{color:'var(--blue)'}}>{revealedCellCount.toLocaleString()}</div>
+          <div className="text-[0.65rem]" style={{color:'var(--text-2)'}}>Cells revealed</div>
+        </div>
+        <div className="glass rounded-xl p-3 text-center" style={{borderLeft:'3px solid var(--purple)'}}>
+          <div className="mono text-lg font-bold" style={{color:'var(--purple)'}}>{revealedPct}%</div>
+          <div className="text-[0.65rem]" style={{color:'var(--text-2)'}}>Of full matrix</div>
+        </div>
+        <div className="glass rounded-xl p-3 text-center" style={{borderLeft:'3px solid var(--yellow)'}}>
+          <div className="mono text-lg font-bold" style={{color:'var(--yellow)'}}>{speedup}{speedup !== '—' ? '×' : ''}</div>
+          <div className="text-[0.65rem]" style={{color:'var(--text-2)'}}>Speedup vs full</div>
+        </div>
+      </div>
+    );
+
+    const Callout = () => {
+      if (f.id === 'full') {
+        return (
+          <div className="glass rounded-xl p-5 max-w-2xl mx-auto mt-6" style={{borderLeft:'3px solid var(--red)'}}>
+            <div className="text-sm" style={{color:'var(--text-2)'}}>
+              <strong style={{color:'var(--red)'}}>The naive cost:</strong> {N} documents × {T} query tokens = <strong className="mono">{(N*T).toLocaleString()}</strong> per-token MaxSim operations per query. For large corpora and long contexts, this dominates latency.
+            </div>
+          </div>
+        );
+      }
+      if (f.id === 'bounds-intro') {
+        return (
+          <div className="glass rounded-xl p-5 max-w-3xl mx-auto mt-6" style={{borderLeft:'3px solid var(--green)'}}>
+            <div className="text-sm" style={{color:'var(--text-2)'}}>
+              <div className="mb-3">
+                <strong style={{color:'var(--green)'}}>How to bound a partially-observed sum:</strong>
+              </div>
+              <div className="glass rounded-lg p-3 mono text-xs leading-loose mb-3" style={{color:'var(--text-2)'}}>
+                estimate<sub>i</sub> = T · (S<sub>i</sub> / n<sub>i</sub>) &nbsp;&nbsp;&nbsp;(scale partial sum to all T tokens)<br/>
+                LCB<sub>i</sub> = estimate<sub>i</sub> − r<sub>i</sub><sup>eff</sup><br/>
+                UCB<sub>i</sub> = estimate<sub>i</sub> + r<sub>i</sub><sup>eff</sup>
+              </div>
+              <p className="text-xs" style={{color:'var(--text-3)'}}>
+                The radius r<sup>eff</sup> comes from Serfling-Bernstein concentration for sampling without replacement from a finite population.
+                It shrinks with more observations (n<sub>i</sub>↑) and tighter empirical variance (σ̂↓). The interval [LCB, UCB] is the doc's plausible range of true total scores.
+              </p>
+            </div>
+          </div>
+        );
+      }
+      if (f.id === 'elim-condition') {
+        return (
+          <div className="glass rounded-xl p-5 max-w-3xl mx-auto mt-6" style={{borderLeft:'3px solid var(--yellow)'}}>
+            <div className="text-sm" style={{color:'var(--text-2)'}}>
+              <div className="mb-3">
+                <strong style={{color:'var(--yellow)'}}>The elimination rule:</strong>
+              </div>
+              <div className="glass rounded-lg p-4 text-center mb-3">
+                <div className="mono text-base" style={{color:'var(--text-1)'}}>
+                  UCB<sub>i</sub> &lt; LCB<sub>(K)</sub> &nbsp;&nbsp;⟹&nbsp;&nbsp; <span style={{color:'var(--red)'}}>eliminate doc i</span>
+                </div>
+                <div className="text-[0.65rem] mt-2" style={{color:'var(--text-3)'}}>
+                  where LCB<sub>(K)</sub> is the K-th largest LCB among all surviving docs
+                </div>
+              </div>
+              <p className="text-xs" style={{color:'var(--text-3)'}}>
+                <strong>Intuition:</strong> LCB<sub>(K)</sub> is a "floor" we're confident K docs can reach. If doc i's ceiling (UCB) is below this floor,
+                then i cannot possibly be in the top-K — even its best case loses to K winners' worst cases. The proof is one line: by definition,
+                at least K docs have LCB ≥ LCB<sub>(K)</sub> &gt; UCB<sub>i</sub> ≥ true score of i.
+              </p>
+            </div>
+          </div>
+        );
+      }
+      if (f.id === 'round1-elim') {
+        return (
+          <div className="glass rounded-xl p-5 max-w-2xl mx-auto mt-6" style={{borderLeft:'3px solid var(--green)'}}>
+            <div className="text-sm" style={{color:'var(--text-2)'}}>
+              <strong style={{color:'var(--green)'}}>Elimination applied to the matrix:</strong> the docs whose UCB fell below the K-th LCB are dropped.
+              Their partial sums are discarded; surviving docs carry their observations into round 2.
+            </div>
+          </div>
+        );
+      }
+      if (f.id === 'bounds-tighten') {
+        return (
+          <div className="glass rounded-xl p-5 max-w-3xl mx-auto mt-6" style={{borderLeft:'3px solid var(--blue)'}}>
+            <div className="text-sm" style={{color:'var(--text-2)'}}>
+              <strong style={{color:'var(--blue)'}}>Cascading elimination:</strong> each round's observations shrink r<sup>eff</sup> for every surviving doc,
+              so both LCBs and UCBs move inward. The K-th LCB rises; UCBs fall. Docs that barely survived round 1 are now below the new threshold.
+              This is why multi-round elimination is much more efficient than a single sweep — each round's pruning is amplified by the next round's tighter bounds.
+            </div>
+          </div>
+        );
+      }
+      if (f.id === 'final') {
+        return (
+          <div className="glass rounded-xl p-5 max-w-2xl mx-auto mt-6" style={{borderLeft:'3px solid var(--yellow)'}}>
+            <div className="text-sm" style={{color:'var(--text-2)'}}>
+              <strong style={{color:'var(--yellow)'}}>Full evaluation on {aliveCount} survivors:</strong> compute the remaining {REMAINING_COLS.length} query tokens
+              on the {aliveCount} surviving docs. This is cheap ({aliveCount} × {REMAINING_COLS.length} = {aliveCount * REMAINING_COLS.length} cells) and gives
+              exact per-doc totals for the final ranking. After elimination has converged, precise scores matter again — but only for the small survivor set.
+            </div>
+          </div>
+        );
+      }
+      if (f.id === 'result') {
+        return (
+          <div className="glass rounded-xl p-5 max-w-2xl mx-auto mt-6" style={{borderLeft:'3px solid var(--green)'}}>
+            <div className="text-sm" style={{color:'var(--text-2)'}}>
+              <strong style={{color:'var(--green)'}}>Same top-{K} as full scoring</strong>, for ~{Math.round(revealedCellCount/totalCells*100)}% of the compute.
+              Progressive elimination concentrates work on the hard cases — the docs near the K-th boundary — and skips obvious losers entirely.
+            </div>
+          </div>
+        );
+      }
+      return null;
+    };
+
+    return (
+      <div>
+        <div className="flex justify-center gap-1.5 mb-10 flex-wrap">
+          {FRAMES.map((fr, i) => (
+            <button key={i} onClick={() => setFrame(i)}
+              className="rounded-full transition-all duration-300"
+              style={{
+                width: i === frame ? 44 : 10,
+                height: 10,
+                background: i === frame ? 'var(--yellow)' : 'rgba(100,116,139,0.5)'
+              }}
+              title={fr.title} />
+          ))}
+        </div>
+
+        <div className="text-center mb-10">
+          <h3 className="font-serif text-2xl md:text-3xl mb-3">{f.title}</h3>
+          <p className="text-sm md:text-base max-w-2xl mx-auto leading-relaxed" style={{color:'var(--text-2)'}}>
+            {f.sub}
+          </p>
+        </div>
+
+        <div className="max-w-4xl mx-auto" key={frame}>
+          <div className="fade-up">
+            <StatsRow />
+            {f.kind === 'intervals' ? <IntervalView /> : <MatrixView />}
+            <Callout />
+          </div>
+        </div>
+
+        <div className="flex justify-center gap-4 mt-8">
+          <button onClick={() => setFrame(Math.max(0, frame - 1))} disabled={frame === 0}
+            className="px-5 py-2.5 rounded-xl font-medium text-sm glass disabled:opacity-30 disabled:cursor-not-allowed hover:bg-white/5 transition-all">
+            ← Previous
+          </button>
+          <button onClick={() => setFrame(Math.min(FRAMES.length - 1, frame + 1))} disabled={frame === FRAMES.length - 1}
+            className="px-5 py-2.5 rounded-xl font-medium text-sm disabled:opacity-30 disabled:cursor-not-allowed hover:bg-yellow-500/20 transition-all"
+            style={{background:'rgba(251,191,36,0.1)', border:'1px solid rgba(251,191,36,0.3)', color:'var(--yellow)'}}>
+            Next →
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  ReactDOM.render(<ProgressiveElimination />, document.getElementById('elimination-root'));
+})();
+</script>
+</body>
+</html>
