@@ -38,6 +38,5 @@ pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://
 ```
 
 ## Notes
-- **Anonymity / ARR:** the paper is mid-review and Appendix D promises "release upon publication." Until acceptance, prefer TestPyPI; flip to production PyPI after the decision.
-- **Name collisions:** if `colbandit` or `numkong` is taken on PyPI, add a vendor prefix (`ibm-colbandit`, `ibm-numkong`) — change `name = "…"` in each `pyproject.toml` (and the `dependencies = ["…"]` line in colbandit/pyproject.toml).
+- **Name collisions:** if `colbandit` or `numkong` is taken on PyPI, add a vendor prefix (e.g., `<vendor>-colbandit`) — change `name = "…"` in each `pyproject.toml` (and the `dependencies = ["…"]` line in colbandit/pyproject.toml).
 - **Apple Silicon vs Intel Mac:** `macos-14` runner produces `*_arm64.whl`; `macos-13` produces `*_x86_64.whl`. End users on either Mac get the right wheel automatically.
