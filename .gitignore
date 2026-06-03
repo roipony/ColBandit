@@ -7,3 +7,5 @@ dist/
 .pytest_cache/
 *.npz
 native/numkong/target/
+colbandit.egg-info/
+wheelhouse/
