@@ -18,8 +18,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-14, macos-13, windows-latest]
-        # macos-14 = Apple-Silicon (arm64), macos-13 = Intel (x86_64)
+        os: [ubuntu-latest, macos-14]
+        # macos-14 = Apple-Silicon (arm64). Linux x86_64 via manylinux.
+        # Intel-mac (macos-13) and Windows are intentionally not supported:
+        # the vendored NumKong C kernel uses GCC/clang-only extensions
+        # (__attribute__((target(...))), inline asm, etc.) that MSVC rejects,
+        # and Intel-mac demand is negligible — Apple Silicon covers the Mac path.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
