@@ -8,7 +8,7 @@ query-token × document matrix. It is a drop-in scoring/reranking layer over pre
 token embeddings — no retraining, no index changes — and runs on x86 (AVX2) and Apple
 Silicon (NEON) via the vendored `numkong` kernel.
 
-> Paper: [*Col-Bandit: Zero-Shot Query-Time Pruning for Late-Interaction Retrieval*](https://arxiv.org/abs/2602.02827) (arXiv:2602.02827).
+> Paper: [*Col-Bandit: Query-Time Top-K Estimation for Late-Interaction Retrieval*](https://arxiv.org/abs/2602.02827) (arXiv:2602.02827).
 
 ## Install
 
@@ -120,7 +120,7 @@ If you use Col-Bandit in your research, please cite:
 
 ```bibtex
 @article{pony2026colbandit,
-  title   = {Col-Bandit: Zero-Shot Query-Time Pruning for Late-Interaction Retrieval},
+  title   = {Col-Bandit: Query-Time Top-K Estimation for Late-Interaction Retrieval},
   author  = {Pony, Roi and Raz, Adi and Naparstek, Oshri and Friedman, Idan and Barzelay, Udi},
   journal = {arXiv preprint arXiv:2602.02827},
   year    = {2026},
