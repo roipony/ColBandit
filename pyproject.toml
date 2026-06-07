@@ -44,6 +44,12 @@ test-command = "pytest -q {project}/tests/test_smoke.py"
 # on the Linux runner. manylinux_2_28 has GCC 12 and works correctly, and
 # covers Ubuntu 20.04+ / RHEL 8+ / Fedora 33+ — every modern distro.
 manylinux-x86_64-image = "manylinux_2_28"
+# Disable ISA targets that NumKong's vendored headers don't carry the right
+# function-level __attribute__((target(...))) for (their probes pass on
+# modern GCC, then GCC refuses to inline the new intrinsic into a caller
+# without matching target attrs — "target specific option mismatch").
+# We keep Haswell/Skylake/Icelake which cover every PyPI-relevant Intel CPU.
+environment = { NK_TARGET_SAPPHIRE = "0", NK_TARGET_SAPPHIREAMX = "0", NK_TARGET_GRANITEAMX = "0", NK_TARGET_GENOA = "0", NK_TARGET_DIAMOND = "0", NK_TARGET_TURIN = "0", NK_TARGET_ALDER = "0", NK_TARGET_SIERRA = "0" }
 
 [tool.cibuildwheel.macos]
 # libomp is keg-only on Homebrew, so delocate-wheel won't find it via the default
