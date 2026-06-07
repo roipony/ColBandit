@@ -37,6 +37,14 @@ build-verbosity = 1
 test-requires = ["numpy", "pytest"]
 test-command = "pytest -q {project}/tests/test_smoke.py"
 
+[tool.cibuildwheel.linux]
+# Default manylinux2014 ships GCC 10, whose AVX-512-BW intrinsics
+# (_mm512_loadu_epi16, _mm512_loadu_epi8) are mis-declared — they return
+# `int` instead of `__m512i`, so NumKong's icelake header fails to compile
+# on the Linux runner. manylinux_2_28 has GCC 12 and works correctly, and
+# covers Ubuntu 20.04+ / RHEL 8+ / Fedora 33+ — every modern distro.
+manylinux-x86_64-image = "manylinux_2_28"
+
 [tool.cibuildwheel.macos]
 # libomp is keg-only on Homebrew, so delocate-wheel won't find it via the default
 # loader paths. We expose its lib dir to the repair step via DYLD_LIBRARY_PATH
