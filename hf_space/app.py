@@ -236,6 +236,49 @@ def waterfall_figure(survivors: list[int], K: int):
     return fig
 
 
+def round_timing_figure(kernel_ms: list[float], elim_ms: list[float], survivors: list[int]):
+    """Per-round wall-clock: kernel-time + elim-time stacked, with #survivors annotated.
+
+    Tells the "doing less work each round" story directly — as the active set
+    shrinks the kernel-time per round drops, often by an order of magnitude
+    between the first and last rounds.
+    """
+    if not kernel_ms:
+        return go.Figure()
+    R = len(kernel_ms)
+    elim = (elim_ms + [0.0] * R)[:R]  # pad in case kernel has one extra round
+    rounds = list(range(R))
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        name="kernel (SIMD MaxSim on survivors)",
+        x=rounds, y=kernel_ms, marker=dict(color="#7e57c2"),
+        hovertemplate="round %{x}<br>kernel %{y:.2f} ms<extra></extra>",
+    ))
+    fig.add_trace(go.Bar(
+        name="elimination (LCB/UCB sweep)",
+        x=rounds, y=elim, marker=dict(color="#ffb74d"),
+        hovertemplate="round %{x}<br>elim %{y:.2f} ms<extra></extra>",
+    ))
+    # Annotate #survivors above each bar
+    totals = [kernel_ms[r] + elim[r] for r in range(R)]
+    surv_after = (survivors[1:] if len(survivors) > R else survivors)[:R]
+    for r in range(R):
+        if r < len(surv_after):
+            fig.add_annotation(x=r, y=totals[r], text=f"{surv_after[r]} alive",
+                              showarrow=False, yshift=10, font=dict(size=10, color="#555"))
+    fig.update_layout(
+        barmode="stack",
+        title="Per-round wall-clock — kernel work shrinks as the active set crashes",
+        xaxis=dict(title="Round", tickmode="linear", dtick=1),
+        yaxis=dict(title="ms"),
+        template="plotly_white",
+        legend=dict(orientation="h", y=-0.25),
+        margin=dict(l=40, r=20, t=60, b=60),
+        height=320,
+    )
+    return fig
+
+
 def timing_figure(t_cb: float, t_full: float, t_mscpu: float | None):
     names, vals, colors = [], [], []
     names.append("CB-NK<br>(Col-Bandit)"); vals.append(t_cb);     colors.append("#7e57c2")
@@ -280,16 +323,17 @@ def metrics_table(out: dict[str, Any]):
 
 def on_run(query_idx, K, alpha_ef, n_threads):
     out = run_one_query(query_idx, K, alpha_ef, n_threads)
-    wf  = waterfall_figure(out["survivors"], int(K))
-    tm  = timing_figure(out["t_cb_ms"], out["t_full_ms"], out["t_mscpu_ms"])
-    tbl = metrics_table(out)
+    wf   = waterfall_figure(out["survivors"], int(K))
+    rt   = round_timing_figure(out["round_kernel_ms"], out["round_elim_ms"], out["survivors"])
+    tm   = timing_figure(out["t_cb_ms"], out["t_full_ms"], out["t_mscpu_ms"])
+    tbl  = metrics_table(out)
     info = (
         f"**Corpus:** {out['corpus']} — **N={out['N']}** docs, **T={out['T']}** query tokens, "
         f"**K={out['K']}**, **α_ef={out['alpha_ef']}**, threads={out['n_threads']}\n\n"
         f"**Top-K (Full-MaxSim ref):** {out['idx_full']}\n\n"
         f"**Top-K (CB-NK):** {out['idx_cb']}"
     )
-    return wf, tm, tbl, info
+    return wf, rt, tm, tbl, info
 
 
 def build_ui():
@@ -314,7 +358,9 @@ embeddings. Pick a query, hit **Run**, and watch the candidate set crash from
             with gr.Column(scale=3):
                 waterfall = gr.Plot(label="Survivors per round (population crash)")
         with gr.Row():
-            timing = gr.Plot(label="Wall-clock")
+            round_timing = gr.Plot(label="Per-round timing (kernel + elim)")
+        with gr.Row():
+            timing = gr.Plot(label="End-to-end wall-clock")
             table  = gr.Dataframe(
                 headers=["method", "latency", "speedup vs Full", f"Ov@K", "MaxSim coverage"],
                 datatype=["str", "str", "str", "str", "str"],
@@ -323,8 +369,9 @@ embeddings. Pick a query, hit **Run**, and watch the candidate set crash from
             )
         info = gr.Markdown()
 
-        btn.click(on_run, [query_idx, K, alpha_ef, threads], [waterfall, timing, table, info])
-        ui.load(on_run, [query_idx, K, alpha_ef, threads], [waterfall, timing, table, info])
+        outputs = [waterfall, round_timing, timing, table, info]
+        btn.click(on_run, [query_idx, K, alpha_ef, threads], outputs)
+        ui.load(on_run, [query_idx, K, alpha_ef, threads], outputs)
     return ui
 
 
