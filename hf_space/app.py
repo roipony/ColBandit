@@ -46,7 +46,7 @@ HERE = Path(__file__).resolve().parent
 DATA_NPZ = HERE / "demo_data" / "scidocs_demo.npz"
 
 
-def _load_real_corpus(max_docs: int = 1000):
+def _load_real_corpus(max_docs: int = 5000):
     z = np.load(DATA_NPZ, allow_pickle=False)
     doc_emb = z["doc_emb_fp16"].astype(np.float32)
     q_emb   = z["query_emb_fp16"].astype(np.float32)
@@ -123,9 +123,13 @@ ROUND_COLORS = [
 # ---------------------------------------------------------------------------
 
 def run_one_query(query_idx: int, K: int, alpha_ef: float, n_threads: int):
+    # Clamp to physical cores: oversubscription kills CB-NK's per-round
+    # parallel-launch overhead more than it kills Full-MaxSim's single sweep,
+    # so an unguarded n_threads >> cpu_count flips the speedup sign.
+    n_threads = max(1, min(int(n_threads), os.cpu_count() or 1))
     q = QUERIES[int(query_idx)].astype(np.float32)
     out: dict[str, Any] = {"corpus": CORPUS_NAME, "N": N_DOCS, "T": int(q.shape[0]),
-                           "K": int(K), "alpha_ef": float(alpha_ef), "n_threads": int(n_threads)}
+                           "K": int(K), "alpha_ef": float(alpha_ef), "n_threads": n_threads}
 
     # CB-NK (real wall-clock)
     t0 = time.perf_counter()
