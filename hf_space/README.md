@@ -8,7 +8,7 @@ sdk_version: 4.44.0
 app_file: app.py
 pinned: false
 license: apache-2.0
-short_description: Watch query-time top-K identification cut MaxSim FLOPs by ~5x
+short_description: Query-time top-K id cuts MaxSim FLOPs ~5x on ColBERT
 ---
 
 # Col-Bandit Live Demo
