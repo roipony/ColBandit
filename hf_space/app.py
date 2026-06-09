@@ -119,78 +119,6 @@ ROUND_COLORS = [
 
 
 # ---------------------------------------------------------------------------
-# Python-side emulator: extracts per-round survivor counts.
-#
-# Real wall-clock timing comes from colbandit_flat (the C kernel). The kernel's
-# stats dict gives totals (coverage, survived, warmup_rounds) but no per-round
-# trace, which is what the viz needs. So we replay the elimination loop in
-# numpy on top of the precomputed MaxSim matrix — cheap because we already
-# need that matrix to compute the per-token reveal cost anyway.
-# ---------------------------------------------------------------------------
-
-def _maxsim_matrix(query: np.ndarray, docs: list[np.ndarray]) -> np.ndarray:
-    """Per-cell MaxSim H[d, t] = max over doc tokens of <qn[t], dn>. NaN-safe L2 norm."""
-    def _l2(v):
-        n = np.linalg.norm(v, axis=-1, keepdims=True)
-        return v / np.maximum(n, 1e-12)
-    qn = _l2(query)
-    H = np.zeros((len(docs), query.shape[0]), dtype=np.float32)
-    for i, v in enumerate(docs):
-        H[i] = (qn @ _l2(v).T).max(axis=1)
-    return H
-
-
-def simulate_elimination_trace(query: np.ndarray, docs: list[np.ndarray],
-                              K: int, K_margin: int, alpha_ef: float,
-                              round_size: int = 4) -> list[int]:
-    """Replay progressive elimination on the full MaxSim matrix. Returns
-    [N, surv_after_r1, surv_after_r2, ..., final] — exactly what the waterfall
-    viz needs. Uses simple sum-bound intervals (cells in [0, 1]) which are
-    structurally identical to the kernel's Bernstein-Serfling pass for the
-    purpose of *counting* survivors per round.
-    """
-    T = int(query.shape[0])
-    N = len(docs)
-    H = _maxsim_matrix(query, docs)              # [N, T]
-    qnorms = np.linalg.norm(query, axis=-1)
-    token_order = np.argsort(-qnorms)             # qnorm priority (high-norm first)
-    H_ord = H[:, token_order]
-
-    revealed = np.zeros(N, dtype=np.int32)
-    sum_obs  = np.zeros(N, dtype=np.float32)
-    active   = np.ones(N, dtype=bool)
-    trace    = [N]
-
-    rounds = (T + round_size - 1) // round_size
-    for r in range(rounds):
-        tok_start, tok_end = r * round_size, min((r + 1) * round_size, T)
-        new_t = tok_end - tok_start
-        idx = np.where(active)[0]
-        sum_obs[idx]  += H_ord[idx, tok_start:tok_end].sum(axis=1)
-        revealed[idx] += new_t
-
-        t  = np.maximum(revealed, 1)
-        mu = sum_obs / t
-        remaining = T - revealed
-        # Width: alpha_ef * sqrt(log(2/delta)/t) * remaining / T (cosine sims in [-1, 1])
-        width = alpha_ef * np.sqrt(np.log(2.0 / 0.01) / t) * (remaining / max(T, 1))
-        lcb = sum_obs + np.clip(mu - width, -1.0, 1.0) * remaining
-        ucb = sum_obs + np.clip(mu + width,  -1.0, 1.0) * remaining
-        lcb = np.where(active, lcb, -np.inf)
-        ucb = np.where(active, ucb, -np.inf)
-
-        if int(active.sum()) > K:
-            thr = np.sort(lcb)[-K]
-            active &= (ucb >= thr) | (np.arange(N) == np.argmax(np.where(active, lcb, -np.inf)))
-        trace.append(int(active.sum()))
-        if int(active.sum()) <= K + K_margin:
-            break
-    if trace[-1] > K:
-        trace.append(K)  # final rescore stage drops to K
-    return trace
-
-
-# ---------------------------------------------------------------------------
 # Backend: one query × three methods
 # ---------------------------------------------------------------------------
 
@@ -208,10 +136,16 @@ def run_one_query(query_idx: int, K: int, alpha_ef: float, n_threads: int):
     )
     out["t_cb_ms"]  = (time.perf_counter() - t0) * 1000.0
     out["idx_cb"]   = [int(x) for x in idx_cb]
-    # Per-round survivor trace from the Python emulator (kernel doesn't expose it).
-    out["survivors"] = simulate_elimination_trace(q, DOCS, int(K), 5, float(alpha_ef), round_size=4)
+    # Real per-round telemetry straight from the C kernel.
     out["coverage"]  = float(st["coverage"])
-    out["survived"]  = int(st.get("survived", out["survivors"][-1]))
+    out["survived"]  = int(st.get("survived", N_DOCS))
+    survivors = [N_DOCS] + [int(x) for x in st.get("round_n_survivors", [])]
+    if survivors[-1] > int(K):
+        survivors.append(int(K))    # final exact-rescore phase drops to K
+    out["survivors"]      = survivors
+    out["round_tokens"]   = [int(x) for x in st.get("round_tokens", [])]
+    out["round_kernel_ms"] = [float(x) for x in st.get("round_kernel_ms", [])]
+    out["round_elim_ms"]   = [float(x) for x in st.get("round_elim_ms", [])]
 
     # Full-MaxSim (packed)
     t0 = time.perf_counter()

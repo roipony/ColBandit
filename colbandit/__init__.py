@@ -1,12 +1,13 @@
 """Col-Bandit: query-time top-K identification for late-interaction retrieval."""
-from .core import ColBandit
 from ._version import __version__
 
-# Re-export the raw C kernel entry points for users who want direct, low-level
-# access to the vendored CB-NK primitives (same calling convention as upstream
-# NumKong). The high-level ColBandit wrapper above is built on top of these.
+# Import the native kernel FIRST so `core.py`'s `from colbandit import _kernel`
+# works during package init (otherwise core triggers a circular import on
+# partially-initialised `colbandit`). Re-exporting the raw C entry points
+# gives users direct, low-level access to the vendored CB-NK primitives
+# (same calling convention as upstream NumKong).
 try:
-    from colbandit import _kernel as _nk
+    from . import _kernel as _nk
     colbandit_flat = _nk.colbandit_flat
     topm_flat = _nk.topm_flat
     full_maxsim = _nk.full_maxsim
@@ -15,6 +16,8 @@ try:
     total_tokens = _nk.total_tokens
 except ImportError:  # pragma: no cover - matches core.py error handling
     pass
+
+from .core import ColBandit
 
 __all__ = [
     "ColBandit",
