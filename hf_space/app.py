@@ -337,7 +337,8 @@ def on_run(query_idx, K, alpha_ef, n_threads):
 
 
 def build_ui():
-    with gr.Blocks(title="Col-Bandit live demo", theme=gr.themes.Soft(primary_hue="purple")) as ui:
+    # theme= moved to launch() in Gradio 5+.
+    with gr.Blocks(title="Col-Bandit live demo") as ui:
         gr.Markdown(
             f"""# Col-Bandit live demo
 Watch query-time top-K identification cut MaxSim FLOPs by **~5×** on real ColBERT
@@ -376,4 +377,5 @@ embeddings. Pick a query, hit **Run**, and watch the candidate set crash from
 
 
 if __name__ == "__main__":
-    build_ui().launch()
+    build_ui().launch(server_name="0.0.0.0", server_port=7860,
+                      theme=gr.themes.Soft(primary_hue="purple"))

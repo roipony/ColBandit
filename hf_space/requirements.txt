@@ -1,7 +1,4 @@
 colbandit>=0.1.0
 maxsim-cpu>=0.1
 numpy>=1.21
-# Gradio 4.44 (pinned by Space sdk_version) imports HfFolder from
-# huggingface_hub, which was removed in 1.0. Pin to the last 0.x line.
-huggingface_hub<1.0
 plotly>=5.18
