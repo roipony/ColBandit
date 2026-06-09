@@ -1,0 +1,5 @@
+colbandit>=0.1.0
+maxsim-cpu>=0.1
+numpy>=1.21
+gradio>=4.0
+plotly>=5.18
