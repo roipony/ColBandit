@@ -267,6 +267,107 @@ def waterfall_figure(survivors: list[int], K: int):
     return fig
 
 
+def reveal_matrix_figure(N: int, T: int, survivors: list[int], round_tokens: list[int],
+                         winner_ids: list[int], sample_rows: int = 80, seed: int = 0):
+    """Doc x query-token heatmap colored by *which round revealed each cell*.
+
+    The kernel exposes per-round survivor counts and per-round tokens-revealed,
+    but not which specific doc died in which round (only the cohort sizes).
+    We honour the cohort sizes exactly and assign non-winner docs to death
+    rounds in a deterministic order so the visual story matches the algorithm.
+
+    Color legend:
+      0 = never touched (gray)
+      r in 1..R = revealed in bandit round r (greens -> blues -> purples)
+      R+1 = K-margin rescore (gold, every token for the K winners)
+    """
+    if not survivors or not round_tokens:
+        return go.Figure()
+
+    R = len(round_tokens)
+    K = max(1, survivors[-1])
+
+    # 1. Sample rows: all K winners + a representative sample of non-winners.
+    rng = np.random.default_rng(seed)
+    non_winners = np.array([d for d in range(N) if d not in set(winner_ids)])
+    n_other = min(sample_rows - K, len(non_winners))
+    sampled_others = rng.choice(non_winners, size=n_other, replace=False)
+
+    # 2. Assign each sampled non-winner to a death-cohort (round in which it
+    # was eliminated). Cohort sizes are taken proportionally from the actual
+    # survivor deltas so the picture is dimensionally honest.
+    deltas = [survivors[r] - survivors[r + 1] for r in range(R)]  # eliminated in round r+1
+    total_elim = max(1, sum(deltas))
+    cohort_sizes = [int(round(n_other * d / total_elim)) for d in deltas]
+    # Round-off compensation: bump the last cohort if needed.
+    cohort_sizes[-1] += n_other - sum(cohort_sizes)
+
+    # Death-round per sampled non-winner (0-indexed round number 0..R-1 for the
+    # round in which the doc was killed).
+    death_round = []
+    for r, sz in enumerate(cohort_sizes):
+        death_round.extend([r] * sz)
+    death_round = death_round[:n_other]
+    rng.shuffle(death_round)
+
+    # 3. Reveal matrix: rows = sampled docs (winners on top), cols = query tokens.
+    cum_tokens = np.cumsum([0] + round_tokens).astype(int)
+    cum_tokens = np.clip(cum_tokens, 0, T)
+    n_rows = K + n_other
+    mat = np.zeros((n_rows, T), dtype=np.int8)
+
+    # K-margin rescore reveals ALL tokens for the K winners.
+    mat[:K, :T] = R + 1
+    # Winners also accumulated reveals across every round; the K-margin
+    # rescore color subsumes those visually in the slide.
+
+    # Non-winners: a doc that "died in round r" survived rounds 0..r-1 and was
+    # measured in round r before being eliminated. So tokens 0..cum_tokens[r+1]
+    # are revealed for it; we paint each token-band by the round it belongs to.
+    for i, dr in enumerate(death_round):
+        row = K + i
+        for r in range(dr + 1):
+            mat[row, cum_tokens[r]:cum_tokens[r + 1]] = r + 1
+
+    # 4. Discrete colorscale: 0 (gray), then a cool palette for rounds 1..R,
+    # then gold for K-margin rescore.
+    round_colors = ["#4caf50", "#42a5f5", "#9c27b0", "#7e57c2",
+                    "#5c6bc0", "#26a69a", "#ec407a", "#ff7043"]
+    color_levels = ["#eeeeee"] + round_colors[:R] + ["#fdd835"]
+    n_levels = len(color_levels)
+    # Map values [0..R+1] onto [0..1] colorscale steps.
+    colorscale = []
+    for i, c in enumerate(color_levels):
+        lo, hi = i / n_levels, (i + 1) / n_levels
+        colorscale.append([lo, c])
+        colorscale.append([hi, c])
+
+    fig = go.Figure(go.Heatmap(
+        z=mat, x=list(range(T)), y=list(range(n_rows)),
+        colorscale=colorscale, zmin=0, zmax=n_levels - 1,
+        showscale=False,
+        hovertemplate="doc-row %{y}<br>token %{x}<br>state %{z}<extra></extra>",
+    ))
+    fig.update_layout(
+        title=(f"Cell-reveal matrix — {n_rows} sampled docs x T={T} tokens "
+               f"(coverage = {(mat > 0).mean()*100:.1f}%)"),
+        xaxis=dict(title="query token", showgrid=False),
+        yaxis=dict(title="document (winners on top)", autorange="reversed", showgrid=False),
+        template="plotly_white",
+        margin=dict(l=60, r=20, t=60, b=40),
+        height=420,
+    )
+    # Add a manual legend (one Bar trace per color level just for the label).
+    labels = (["never touched"]
+              + [f"round {r+1} ({'everyone' if r == 0 else 'survivors'})" for r in range(R)]
+              + ["K-margin rescore"])
+    for lvl, lab, c in zip(range(n_levels), labels, color_levels):
+        fig.add_trace(go.Bar(x=[None], y=[None], name=lab, marker=dict(color=c),
+                             showlegend=True, visible="legendonly"))
+    fig.update_layout(legend=dict(orientation="h", y=-0.18))
+    return fig
+
+
 def round_timing_figure(kernel_ms: list[float], elim_ms: list[float], survivors: list[int]):
     """Per-round wall-clock: kernel-time + elim-time stacked, with #survivors annotated.
 
@@ -355,6 +456,8 @@ def metrics_table(out: dict[str, Any]):
 def on_run(query_idx, K, alpha_ef, n_threads):
     out = run_one_query(query_idx, K, alpha_ef, n_threads)
     wf   = waterfall_figure(out["survivors"], int(K))
+    rm   = reveal_matrix_figure(out["N"], out["T"], out["survivors"],
+                                 out["round_tokens"], out["idx_cb"][: int(K)])
     rt   = round_timing_figure(out["round_kernel_ms"], out["round_elim_ms"], out["survivors"])
     tm   = timing_figure(out["t_cb_ms"], out["t_full_ms"], out["t_mscpu_ms"])
     tbl  = metrics_table(out)
@@ -364,7 +467,7 @@ def on_run(query_idx, K, alpha_ef, n_threads):
         f"**Top-K (Full-MaxSim ref):** {out['idx_full']}\n\n"
         f"**Top-K (CB-NK):** {out['idx_cb']}"
     )
-    return wf, rt, tm, tbl, info
+    return wf, rm, rt, tm, tbl, info
 
 
 def build_ui():
@@ -399,6 +502,8 @@ due to neighbor activity, but the **ratio** between methods is stable.</sub>
             with gr.Column(scale=3):
                 waterfall = gr.Plot(label="Survivors per round (population crash)")
         with gr.Row():
+            reveal_mat = gr.Plot(label="Cell-reveal matrix (doc × query-token, colored by reveal-round)")
+        with gr.Row():
             round_timing = gr.Plot(label="Per-round timing (kernel + elim)")
         with gr.Row():
             timing = gr.Plot(label="End-to-end wall-clock")
@@ -410,7 +515,7 @@ due to neighbor activity, but the **ratio** between methods is stable.</sub>
             )
         info = gr.Markdown()
 
-        outputs = [waterfall, round_timing, timing, table, info]
+        outputs = [waterfall, reveal_mat, round_timing, timing, table, info]
         btn.click(on_run, [query_idx, K, alpha_ef, threads], outputs)
         ui.load(on_run, [query_idx, K, alpha_ef, threads], outputs)
     return ui
