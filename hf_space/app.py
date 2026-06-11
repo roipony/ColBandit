@@ -131,16 +131,19 @@ def run_one_query(query_idx: int, K: int, alpha_ef: float, n_threads: int):
     out: dict[str, Any] = {"corpus": CORPUS_NAME, "N": N_DOCS, "T": int(q.shape[0]),
                            "K": int(K), "alpha_ef": float(alpha_ef), "n_threads": n_threads}
 
-    # CB-NK (real wall-clock)
+    # Each method gets one *discarded* warmup pass so the measured call sees
+    # warm L2/L3, OpenMP/Rayon thread pools already alive, and BLAS first-touch
+    # behind us. On shared cloud CPU (HF cpu-basic = 2 vCPU with neighbor
+    # tenants) this is the difference between ±50% jitter and stable numbers.
+    def _run_cb():
+        return colbandit_flat(q, I8, F32, INV, OFF, SM,
+                              K=int(K), K_margin=5, alpha_ef=float(alpha_ef), delta=0.01,
+                              n_threads=int(n_threads), docs_packed=DOCS_PACKED, round_size=4)
+    _run_cb()  # warmup, discard
     t0 = time.perf_counter()
-    idx_cb, _, st = colbandit_flat(
-        q, I8, F32, INV, OFF, SM,
-        K=int(K), K_margin=5, alpha_ef=float(alpha_ef), delta=0.01,
-        n_threads=int(n_threads), docs_packed=DOCS_PACKED, round_size=4,
-    )
+    idx_cb, _, st = _run_cb()
     out["t_cb_ms"]  = (time.perf_counter() - t0) * 1000.0
     out["idx_cb"]   = [int(x) for x in idx_cb]
-    # Real per-round telemetry straight from the C kernel.
     out["coverage"]  = float(st["coverage"])
     out["survived"]  = int(st.get("survived", N_DOCS))
     survivors = [N_DOCS] + [int(x) for x in st.get("round_n_survivors", [])]
@@ -151,15 +154,19 @@ def run_one_query(query_idx: int, K: int, alpha_ef: float, n_threads: int):
     out["round_kernel_ms"] = [float(x) for x in st.get("round_kernel_ms", [])]
     out["round_elim_ms"]   = [float(x) for x in st.get("round_elim_ms", [])]
 
-    # Full-MaxSim (packed)
+    def _run_full():
+        return full_maxsim(q, DOCS_PACKED, K=int(K), n_threads=int(n_threads))
+    _run_full()  # warmup, discard
     t0 = time.perf_counter()
-    idx_ex, _, _ = full_maxsim(q, DOCS_PACKED, K=int(K), n_threads=int(n_threads))
+    idx_ex, _, _ = _run_full()
     out["t_full_ms"] = (time.perf_counter() - t0) * 1000.0
     out["idx_full"]  = [int(x) for x in idx_ex]
 
-    # maxsim-cpu (optional)
     if HAVE_MAXSIM_CPU:
         q_c = np.ascontiguousarray(q, dtype=np.float32)
+        # maxsim_cpu's Rayon pool is fixed at process startup via
+        # RAYON_NUM_THREADS — the threads slider has no effect on it.
+        maxsim_cpu.maxsim_scores_variable(q_c, DOCS_LIST_F32)  # warmup, discard
         t0 = time.perf_counter()
         scores = maxsim_cpu.maxsim_scores_variable(q_c, DOCS_LIST_F32)
         out["t_mscpu_ms"] = (time.perf_counter() - t0) * 1000.0
@@ -348,6 +355,10 @@ def build_ui():
 Watch query-time top-K identification cut MaxSim FLOPs by **~5×** on real ColBERT
 embeddings. Pick a query, hit **Run**, and watch the candidate set crash from
 **{N_DOCS}** documents down to **K** survivors across a handful of progressive-elimination rounds.
+
+<sub>Each click silently runs every method once as a warmup and reports the second call.
+On HF cpu-basic (shared 2-vCPU) absolute numbers still drift ±10–20 % between clicks
+due to neighbor activity, but the **ratio** between methods is stable.</sub>
 """
         )
         with gr.Row():
@@ -358,7 +369,10 @@ embeddings. Pick a query, hit **Run**, and watch the candidate set crash from
                                       label="α_ef (cost↔fidelity)",
                                       info="Smaller prunes more aggressively. 1.0 = δ-PAC certificate.")
                 threads   = gr.Slider(1, max(1, os.cpu_count() or 1), value=min(8, os.cpu_count() or 1),
-                                      step=1, label="threads")
+                                      step=1, label="threads (CB-NK & Full-MaxSim only)",
+                                      info=("maxsim-cpu uses Rust Rayon and is locked to "
+                                            f"RAYON_NUM_THREADS={os.environ.get('RAYON_NUM_THREADS','?')} "
+                                            "at process startup."))
                 btn       = gr.Button("Run", variant="primary")
             with gr.Column(scale=3):
                 waterfall = gr.Plot(label="Survivors per round (population crash)")
