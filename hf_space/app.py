@@ -20,8 +20,25 @@ import time
 from pathlib import Path
 from typing import Any
 
+
+def effective_cpus() -> int:
+    """Number of CPUs the container is *actually* allowed to use.
+
+    os.cpu_count() returns the host's logical cores and ignores cgroup
+    CPU quotas — on HF cpu-basic that gives 16, but the real quota is 2.
+    Linux exposes the effective set via sched_getaffinity; fall back to
+    os.cpu_count() on platforms that don't have it (macOS).
+    """
+    try:
+        return max(1, len(os.sched_getaffinity(0)))
+    except AttributeError:
+        return max(1, os.cpu_count() or 1)
+
+
+EFFECTIVE_CPUS = effective_cpus()
+
 # Must be set before first maxsim_cpu call.
-os.environ.setdefault("RAYON_NUM_THREADS", str(min(os.cpu_count() or 4, 16)))
+os.environ.setdefault("RAYON_NUM_THREADS", str(EFFECTIVE_CPUS))
 
 import numpy as np
 import gradio as gr
@@ -123,10 +140,13 @@ ROUND_COLORS = [
 # ---------------------------------------------------------------------------
 
 def run_one_query(query_idx: int, K: int, alpha_ef: float, n_threads: int):
-    # Clamp to physical cores: oversubscription kills CB-NK's per-round
-    # parallel-launch overhead more than it kills Full-MaxSim's single sweep,
-    # so an unguarded n_threads >> cpu_count flips the speedup sign.
-    n_threads = max(1, min(int(n_threads), os.cpu_count() or 1))
+    # Clamp to the cgroup-effective CPU count (NOT os.cpu_count(), which
+    # returns the host's logical cores and ignores container quotas). On
+    # HF cpu-basic this is 2, not 16. Oversubscribing past the effective
+    # quota turns CB-NK's per-round parallel section into a context-switch
+    # storm that can flip the speedup sign or produce isolated per-round
+    # spikes when a neighbor tenant preempts the scheduler.
+    n_threads = max(1, min(int(n_threads), EFFECTIVE_CPUS))
     q = QUERIES[int(query_idx)].astype(np.float32)
     out: dict[str, Any] = {"corpus": CORPUS_NAME, "N": N_DOCS, "T": int(q.shape[0]),
                            "K": int(K), "alpha_ef": float(alpha_ef), "n_threads": n_threads}
@@ -368,9 +388,11 @@ due to neighbor activity, but the **ratio** between methods is stable.</sub>
                 alpha_ef  = gr.Slider(0.05, 1.0, value=0.2, step=0.05,
                                       label="α_ef (cost↔fidelity)",
                                       info="Smaller prunes more aggressively. 1.0 = δ-PAC certificate.")
-                threads   = gr.Slider(1, max(1, os.cpu_count() or 1), value=min(8, os.cpu_count() or 1),
+                threads   = gr.Slider(1, EFFECTIVE_CPUS, value=EFFECTIVE_CPUS,
                                       step=1, label="threads (CB-NK & Full-MaxSim only)",
-                                      info=("maxsim-cpu uses Rust Rayon and is locked to "
+                                      info=(f"This container has {EFFECTIVE_CPUS} usable CPU(s) "
+                                            "(cgroup-effective, not the host's logical cores). "
+                                            "maxsim-cpu uses Rust Rayon and is locked to "
                                             f"RAYON_NUM_THREADS={os.environ.get('RAYON_NUM_THREADS','?')} "
                                             "at process startup."))
                 btn       = gr.Button("Run", variant="primary")
